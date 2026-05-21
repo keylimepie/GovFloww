@@ -1,0 +1,398 @@
+// =============================================
+// GovFlow Database Schema — Prisma
+// =============================================
+// This schema defines the complete data model for Phase 1.
+// All tables use UUID primary keys for security (non-guessable).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Organisation Hierarchy ----
+
+model Organisation {
+  id          String       @id @default(uuid())
+  name        String       @db.VarChar(300)
+  departments Department[]
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@map("organisations")
+}
+
+model Department {
+  id             String               @id @default(uuid())
+  name           String               @db.VarChar(300)
+  code           String               @unique @db.VarChar(20)
+  organisationId String               @map("organisation_id")
+  organisation   Organisation         @relation(fields: [organisationId], references: [id])
+  branches       Branch[]
+  workflows      WorkflowDefinition[]
+  users          User[]
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@map("departments")
+}
+
+model Branch {
+  id           String           @id @default(uuid())
+  name         String           @db.VarChar(300)
+  code         String           @unique @db.VarChar(20)
+  departmentId String           @map("department_id")
+  department   Department       @relation(fields: [departmentId], references: [id])
+  users        User[]
+  submissions  FileSubmission[]
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  @@map("branches")
+}
+
+model Role {
+  id             String          @id @default(uuid())
+  name           String          @unique @db.VarChar(100)
+  code           String          @unique @db.VarChar(50)
+  hierarchyLevel Int             @map("hierarchy_level")
+  permissions    String[]
+  isSystem       Boolean         @default(false) @map("is_system")
+  users          User[]
+  stages         WorkflowStage[]
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  @@map("roles")
+}
+
+// ---- Users ----
+
+model User {
+  id             String     @id @default(uuid())
+  email          String     @unique @db.VarChar(255)
+  passwordHash   String     @map("password_hash")
+  firstName      String     @map("first_name") @db.VarChar(100)
+  lastName       String     @map("last_name") @db.VarChar(100)
+  roleId         String     @map("role_id")
+  role           Role       @relation(fields: [roleId], references: [id])
+  extraPermissions String[] @default([]) @map("extra_permissions")
+  departmentId   String?    @map("department_id")
+  department     Department? @relation(fields: [departmentId], references: [id])
+  branchId       String?    @map("branch_id")
+  branch         Branch?    @relation(fields: [branchId], references: [id])
+  status         String     @default("PENDING") @db.VarChar(20)
+  signaturePin   String?    @map("signature_pin")
+  mfaSecret      String?    @map("mfa_secret")
+  mfaEnabled     Boolean    @default(false) @map("mfa_enabled")
+  mustChangePass Boolean    @default(false) @map("must_change_password")
+  companyName    String?    @map("company_name") @db.VarChar(200)
+  phone          String?    @db.VarChar(20)
+  lastLoginAt    DateTime?  @map("last_login_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  submissions        FileSubmission[]   @relation("ContractorSubmissions")
+  assignedFileStages FileStage[]        @relation("AssignedOfficer")
+  parallelApprovals  ParallelApproval[]
+  comments           Comment[]
+  auditLogs          AuditLog[]         @relation("AuditActor")
+  digitalSignatures  DigitalSignature[]
+  uploadedDocs       Document[]
+  notifications      Notification[]
+
+  @@index([roleId])
+  @@index([departmentId])
+  @@index([branchId])
+  @@index([status])
+  @@map("users")
+}
+
+// ---- Refresh Tokens ----
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique @db.VarChar(500)
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+  userAgent String?  @map("user_agent") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+// ---- Workflow Engine ----
+
+model WorkflowDefinition {
+  id           String          @id @default(uuid())
+  name         String          @db.VarChar(300)
+  description  String?         @db.Text
+  departmentId String          @map("department_id")
+  department   Department      @relation(fields: [departmentId], references: [id])
+  version      Int             @default(1)
+  status       String          @default("DRAFT") @db.VarChar(20)
+  stages       WorkflowStage[]
+  submissions  FileSubmission[]
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  createdBy    String?         @map("created_by")
+
+  @@unique([name, departmentId, version])
+  @@index([departmentId])
+  @@index([status])
+  @@map("workflow_definitions")
+}
+
+model WorkflowStage {
+  id             String              @id @default(uuid())
+  workflowId     String              @map("workflow_id")
+  workflow       WorkflowDefinition  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  name           String              @db.VarChar(300)
+  stageOrder     Int                 @map("stage_order")
+  stageType      String              @default("SEQUENTIAL") @db.VarChar(20)
+  assignedRoleId String              @map("assigned_role_id")
+  assignedRole   Role                @relation(fields: [assignedRoleId], references: [id])
+  slaDays        Int                 @default(3) @map("sla_days")
+  allowedActions String[]            @map("allowed_actions")
+  requiredDocs   String[]            @map("required_docs")
+  routingRules   StageRoutingRule[]
+  parallelConfig ParallelStageConfig?
+  fileStages     FileStage[]
+  documents      Document[]
+
+  @@unique([workflowId, stageOrder])
+  @@index([workflowId])
+  @@map("workflow_stages")
+}
+
+model ParallelStageConfig {
+  id          String        @id @default(uuid())
+  stageId     String        @unique @map("stage_id")
+  stage       WorkflowStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  strategy    String        @db.VarChar(30)
+  quorumCount Int?          @map("quorum_count")
+
+  @@map("parallel_stage_configs")
+}
+
+model StageRoutingRule {
+  id             String        @id @default(uuid())
+  stageId        String        @map("stage_id")
+  stage          WorkflowStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  conditionField String        @map("condition_field") @db.VarChar(100)
+  operator       String        @db.VarChar(20)
+  value          String        @db.VarChar(500)
+  targetStageId  String        @map("target_stage_id")
+
+  @@index([stageId])
+  @@map("stage_routing_rules")
+}
+
+// ---- File Submissions ----
+
+model FileSubmission {
+  id              String            @id @default(uuid())
+  trackingNumber  String            @unique @map("tracking_number") @db.VarChar(50)
+  contractorId    String            @map("contractor_id")
+  contractor      User              @relation("ContractorSubmissions", fields: [contractorId], references: [id])
+  workflowId      String            @map("workflow_id")
+  workflow        WorkflowDefinition @relation(fields: [workflowId], references: [id])
+  workflowVersion Int               @map("workflow_version")
+  branchId        String            @map("branch_id")
+  branch          Branch            @relation(fields: [branchId], references: [id])
+  status          String            @default("SUBMITTED") @db.VarChar(20)
+  currentStageId  String?           @map("current_stage_id")
+  publicTrackable Boolean           @default(false) @map("public_trackable")
+  title           String            @db.VarChar(500)
+  description     String?           @db.Text
+  metadata        Json?
+  documents       Document[]
+  fileStages      FileStage[]
+  comments        Comment[]
+  auditLogs       AuditLog[]
+  signatures      DigitalSignature[]
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  @@index([contractorId])
+  @@index([workflowId])
+  @@index([branchId])
+  @@index([status])
+  @@index([currentStageId])
+  @@index([createdAt])
+  @@map("file_submissions")
+}
+
+model FileStage {
+  id                String             @id @default(uuid())
+  submissionId      String             @map("submission_id")
+  submission        FileSubmission     @relation(fields: [submissionId], references: [id])
+  stageId           String             @map("stage_id")
+  stage             WorkflowStage      @relation(fields: [stageId], references: [id])
+  assignedTo        String?            @map("assigned_to")
+  assignedOfficer   User?              @relation("AssignedOfficer", fields: [assignedTo], references: [id])
+  status            String             @default("PENDING") @db.VarChar(20)
+  startedAt         DateTime           @default(now()) @map("started_at")
+  completedAt       DateTime?          @map("completed_at")
+  slaDueAt          DateTime           @map("sla_due_at")
+  parallelApprovals ParallelApproval[]
+  slaAlerts         SlaAlert[]
+
+  @@index([submissionId])
+  @@index([stageId])
+  @@index([assignedTo])
+  @@index([status])
+  @@index([slaDueAt])
+  @@map("file_stages")
+}
+
+model ParallelApproval {
+  id          String    @id @default(uuid())
+  fileStageId String    @map("file_stage_id")
+  fileStage   FileStage @relation(fields: [fileStageId], references: [id])
+  officerId   String    @map("officer_id")
+  officer     User      @relation(fields: [officerId], references: [id])
+  decision    String?   @db.VarChar(20)
+  comment     String?   @db.Text
+  signedAt    DateTime? @map("signed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@unique([fileStageId, officerId])
+  @@map("parallel_approvals")
+}
+
+// ---- Documents (MinIO Storage) ----
+
+model Document {
+  id              String         @id @default(uuid())
+  submissionId    String         @map("submission_id")
+  submission      FileSubmission @relation(fields: [submissionId], references: [id])
+  fileName        String         @map("file_name") @db.VarChar(500)
+  originalName    String         @map("original_name") @db.VarChar(500)
+  mimeType        String         @map("mime_type") @db.VarChar(100)
+  sizeBytes       BigInt         @map("size_bytes")
+  sha256          String?        @db.VarChar(64)
+  storageKey      String         @map("storage_key") @db.VarChar(1000)
+  uploaderId      String         @map("uploader_id")
+  uploader        User           @relation(fields: [uploaderId], references: [id])
+  stageId         String?        @map("stage_id") // Optional, if uploaded during a specific stage
+  stage           WorkflowStage? @relation(fields: [stageId], references: [id])
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  @@index([submissionId])
+  @@index([uploaderId])
+  @@map("documents")
+}
+
+// ---- Comments & Queries ----
+
+model Comment {
+  id           String         @id @default(uuid())
+  submissionId String         @map("submission_id")
+  submission   FileSubmission @relation(fields: [submissionId], references: [id])
+  stageId      String?        @map("stage_id")
+  authorId     String         @map("author_id")
+  author       User           @relation(fields: [authorId], references: [id])
+  text         String         @db.Text
+  commentType  String         @default("COMMENT") @map("comment_type") @db.VarChar(20)
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  @@index([submissionId])
+  @@index([authorId])
+  @@map("comments")
+}
+
+// ---- Audit Trail (Append-Only, Hash-Chained) ----
+
+model AuditLog {
+  id           String          @id @default(uuid())
+  submissionId String?         @map("submission_id")
+  submission   FileSubmission? @relation(fields: [submissionId], references: [id])
+  actorId      String          @map("actor_id")
+  actor        User            @relation("AuditActor", fields: [actorId], references: [id])
+  action       String          @db.VarChar(50)
+  metadata     Json
+  ipAddress    String          @map("ip_address") @db.VarChar(45)
+  previousHash String          @map("previous_hash") @db.VarChar(64)
+  rowHash      String          @map("row_hash") @db.VarChar(64)
+  createdAt    DateTime        @default(now()) @map("created_at")
+
+  @@index([submissionId])
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ---- Digital Signatures ----
+
+model DigitalSignature {
+  id                String         @id @default(uuid())
+  submissionId      String         @map("submission_id")
+  submission        FileSubmission @relation(fields: [submissionId], references: [id])
+  officerId         String         @map("officer_id")
+  officer           User           @relation(fields: [officerId], references: [id])
+  tier              Int            @db.SmallInt
+  documentHash      String         @map("document_hash") @db.VarChar(64)
+  signatureData     String         @map("signature_data") @db.Text
+  ipAddress         String         @map("ip_address") @db.VarChar(45)
+  deviceFingerprint String?        @map("device_fingerprint") @db.VarChar(200)
+  createdAt         DateTime       @default(now()) @map("created_at")
+
+  @@index([submissionId])
+  @@index([officerId])
+  @@map("digital_signatures")
+}
+
+// ---- Tracking Number Sequence ----
+
+model TrackingSequence {
+  id             String @id @default(uuid())
+  departmentCode String @map("department_code") @db.VarChar(20)
+  year           Int
+  lastNumber     Int    @default(0) @map("last_number")
+
+  @@unique([departmentCode, year])
+  @@map("tracking_sequences")
+}
+
+// ---- Notifications ----
+
+model Notification {
+  id          String   @id @default(uuid())
+  recipientId String   @map("recipient_id")
+  recipient   User     @relation(fields: [recipientId], references: [id])
+  type        String   @db.VarChar(50)
+  title       String   @db.VarChar(200)
+  message     String   @db.Text
+  payload     Json?
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([recipientId])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ---- SLA Alerts ----
+
+model SlaAlert {
+  id             String    @id @default(uuid())
+  fileStageId    String    @map("file_stage_id")
+  fileStage      FileStage @relation(fields: [fileStageId], references: [id])
+  alertType      String    @db.VarChar(20) // "WARNING" or "BREACH"
+  triggeredAt    DateTime  @default(now()) @map("triggered_at")
+  acknowledgedBy String?   @map("acknowledged_by")
+  acknowledgedAt DateTime? @map("acknowledged_at")
+
+  @@index([fileStageId])
+  @@map("sla_alerts")
+}

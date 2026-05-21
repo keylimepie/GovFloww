@@ -1,0 +1,2 @@
+ALTER TABLE "documents" ADD COLUMN "sha256" VARCHAR(64);
+
