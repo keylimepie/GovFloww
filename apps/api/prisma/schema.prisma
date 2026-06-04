@@ -41,16 +41,29 @@ model Department {
 }
 
 model Branch {
-  id           String           @id @default(uuid())
-  name         String           @db.VarChar(300)
-  code         String           @unique @db.VarChar(20)
-  departmentId String           @map("department_id")
-  department   Department       @relation(fields: [departmentId], references: [id])
-  users        User[]
-  submissions  FileSubmission[]
-  createdAt    DateTime         @default(now()) @map("created_at")
-  updatedAt    DateTime         @updatedAt @map("updated_at")
+  id             String           @id @default(uuid())
+  name           String           @db.VarChar(300)
+  code           String           @unique @db.VarChar(20)
+  departmentId   String           @map("department_id")
+  department     Department       @relation(fields: [departmentId], references: [id])
+  branchLevel    Int              @default(1) @map("branch_level")
+  parentBranchId String?          @map("parent_branch_id")
+  parentBranch   Branch?          @relation("BranchHierarchy", fields: [parentBranchId], references: [id])
+  childBranches  Branch[]         @relation("BranchHierarchy")
+  clusterType    String?          @map("cluster_type") @db.VarChar(50)
+  nepaliName     String?          @map("nepali_name") @db.VarChar(255)
+  isDorHq        Boolean          @default(false) @map("is_dor_hq")
+  users          User[]
+  submissions    FileSubmission[] @relation("OriginBranch")
+  currentSubmissions FileSubmission[] @relation("CurrentBranch")
+  fileStages     FileStage[]
+  targetRaye     RayeRequest[]    @relation("RayeTargetBranch")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
 
+  @@index([parentBranchId])
+  @@index([branchLevel])
+  @@index([clusterType])
   @@map("branches")
 }
 
@@ -85,6 +98,8 @@ model User {
   branchId       String?    @map("branch_id")
   branch         Branch?    @relation(fields: [branchId], references: [id])
   status         String     @default("PENDING") @db.VarChar(20)
+  designation    String?    @db.VarChar(200)
+  employeeCode   String?    @map("employee_code") @db.VarChar(50)
   signaturePin   String?    @map("signature_pin")
   mfaSecret      String?    @map("mfa_secret")
   mfaEnabled     Boolean    @default(false) @map("mfa_enabled")
@@ -104,6 +119,11 @@ model User {
   digitalSignatures  DigitalSignature[]
   uploadedDocs       Document[]
   notifications      Notification[]
+  tokAssignedBy      TokAssignment[]    @relation("TokAssignedBy")
+  tokAssignedTo      TokAssignment[]    @relation("TokAssignedTo")
+  rayeRequestedBy    RayeRequest[]      @relation("RayeRequester")
+  rayeAssignedTo     RayeRequest[]      @relation("RayeAssignedOfficer")
+  preparedTippani    TippaniMetadata[]  @relation("TippaniPreparedBy")
 
   @@index([roleId])
   @@index([departmentId])
@@ -134,11 +154,16 @@ model RefreshToken {
 model WorkflowDefinition {
   id           String          @id @default(uuid())
   name         String          @db.VarChar(300)
+  code         String?         @db.VarChar(50)
+  nepaliName   String?         @map("nepali_name") @db.VarChar(255)
   description  String?         @db.Text
   departmentId String          @map("department_id")
   department   Department      @relation(fields: [departmentId], references: [id])
   version      Int             @default(1)
   status       String          @default("DRAFT") @db.VarChar(20)
+  metadataSchema Json?         @map("metadata_schema")
+  isPubliclyTrackable Boolean  @default(false) @map("is_publicly_trackable")
+  publicDetailLevel String     @default("BASIC") @map("public_detail_level") @db.VarChar(20)
   stages       WorkflowStage[]
   submissions  FileSubmission[]
   createdAt    DateTime        @default(now()) @map("created_at")
@@ -200,14 +225,16 @@ model StageRoutingRule {
 
 model FileSubmission {
   id              String            @id @default(uuid())
-  trackingNumber  String            @unique @map("tracking_number") @db.VarChar(50)
+  trackingNumber  String            @unique @map("tracking_number") @db.VarChar(100)
   contractorId    String            @map("contractor_id")
   contractor      User              @relation("ContractorSubmissions", fields: [contractorId], references: [id])
   workflowId      String            @map("workflow_id")
   workflow        WorkflowDefinition @relation(fields: [workflowId], references: [id])
   workflowVersion Int               @map("workflow_version")
   branchId        String            @map("branch_id")
-  branch          Branch            @relation(fields: [branchId], references: [id])
+  branch          Branch            @relation("OriginBranch", fields: [branchId], references: [id])
+  currentBranchId String?           @map("current_branch_id")
+  currentBranch   Branch?           @relation("CurrentBranch", fields: [currentBranchId], references: [id])
   status          String            @default("SUBMITTED") @db.VarChar(20)
   currentStageId  String?           @map("current_stage_id")
   publicTrackable Boolean           @default(false) @map("public_trackable")
@@ -219,12 +246,16 @@ model FileSubmission {
   comments        Comment[]
   auditLogs       AuditLog[]
   signatures      DigitalSignature[]
+  tokAssignments  TokAssignment[]
+  rayeRequests    RayeRequest[]
+  tippaniMetadata TippaniMetadata[]
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
   @@index([contractorId])
   @@index([workflowId])
   @@index([branchId])
+  @@index([currentBranchId])
   @@index([status])
   @@index([currentStageId])
   @@index([createdAt])
@@ -237,6 +268,8 @@ model FileStage {
   submission        FileSubmission     @relation(fields: [submissionId], references: [id])
   stageId           String             @map("stage_id")
   stage             WorkflowStage      @relation(fields: [stageId], references: [id])
+  branchId          String?            @map("branch_id")
+  branch            Branch?            @relation(fields: [branchId], references: [id])
   assignedTo        String?            @map("assigned_to")
   assignedOfficer   User?              @relation("AssignedOfficer", fields: [assignedTo], references: [id])
   status            String             @default("PENDING") @db.VarChar(20)
@@ -245,9 +278,13 @@ model FileStage {
   slaDueAt          DateTime           @map("sla_due_at")
   parallelApprovals ParallelApproval[]
   slaAlerts         SlaAlert[]
+  tokAssignments    TokAssignment[]
+  rayeRequests      RayeRequest[]
+  tippaniMetadata   TippaniMetadata[]
 
   @@index([submissionId])
   @@index([stageId])
+  @@index([branchId])
   @@index([assignedTo])
   @@index([status])
   @@index([slaDueAt])
@@ -285,6 +322,7 @@ model Document {
   uploader        User           @relation(fields: [uploaderId], references: [id])
   stageId         String?        @map("stage_id") // Optional, if uploaded during a specific stage
   stage           WorkflowStage? @relation(fields: [stageId], references: [id])
+  tippaniMetadata TippaniMetadata?
   createdAt       DateTime       @default(now()) @map("created_at")
 
   @@index([submissionId])
@@ -362,6 +400,96 @@ model TrackingSequence {
 
   @@unique([departmentCode, year])
   @@map("tracking_sequences")
+}
+
+// ---- DOR-specific tracking sequence ----
+
+model DorTrackingSequence {
+  id           String @id @default(uuid())
+  branchCode   String @map("branch_code") @db.VarChar(20)
+  workflowCode String @map("workflow_code") @db.VarChar(20)
+  fiscalYear   String @map("fiscal_year") @db.VarChar(20)
+  lastNumber   Int    @default(0) @map("last_number")
+
+  @@unique([branchCode, workflowCode, fiscalYear])
+  @@map("dor_tracking_sequences")
+}
+
+// ---- DOR Tok, Raye, and Tippani ----
+
+model TokAssignment {
+  id              String         @id @default(uuid())
+  fileStageId     String         @map("file_stage_id")
+  fileStage       FileStage      @relation(fields: [fileStageId], references: [id], onDelete: Cascade)
+  submissionId    String         @map("submission_id")
+  submission      FileSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  tokBy           String         @map("tok_by")
+  assignedBy      User           @relation("TokAssignedBy", fields: [tokBy], references: [id])
+  tokTo           String         @map("tok_to")
+  assignedTo      User           @relation("TokAssignedTo", fields: [tokTo], references: [id])
+  taskDescription String?        @map("task_description") @db.Text
+  status          String         @default("ACTIVE") @db.VarChar(20)
+  responseNote    String?        @map("response_note") @db.Text
+  assignedAt      DateTime       @default(now()) @map("assigned_at")
+  completedAt     DateTime?      @map("completed_at")
+
+  @@index([fileStageId])
+  @@index([submissionId])
+  @@index([tokBy])
+  @@index([tokTo])
+  @@index([status])
+  @@map("tok_assignments")
+}
+
+model RayeRequest {
+  id             String         @id @default(uuid())
+  fileStageId    String         @map("file_stage_id")
+  fileStage      FileStage      @relation(fields: [fileStageId], references: [id], onDelete: Cascade)
+  submissionId   String         @map("submission_id")
+  submission     FileSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  requestedBy    String         @map("requested_by")
+  requester      User           @relation("RayeRequester", fields: [requestedBy], references: [id])
+  targetSakha    String         @map("target_sakha") @db.VarChar(20)
+  targetBranchId String?        @map("target_branch_id")
+  targetBranch   Branch?        @relation("RayeTargetBranch", fields: [targetBranchId], references: [id])
+  assignedTo     String?        @map("assigned_to")
+  assignedOfficer User?         @relation("RayeAssignedOfficer", fields: [assignedTo], references: [id])
+  requestText    String         @map("request_text") @db.Text
+  responseText   String?        @map("response_text") @db.Text
+  status         String         @default("PENDING") @db.VarChar(20)
+  canReassign    Boolean        @default(true) @map("can_reassign")
+  requestedAt    DateTime       @default(now()) @map("requested_at")
+  respondedAt    DateTime?      @map("responded_at")
+  dueAt          DateTime?      @map("due_at")
+
+  @@index([fileStageId])
+  @@index([submissionId])
+  @@index([requestedBy])
+  @@index([assignedTo])
+  @@index([targetBranchId])
+  @@index([status])
+  @@map("raye_requests")
+}
+
+model TippaniMetadata {
+  id                 String         @id @default(uuid())
+  submissionId       String         @map("submission_id")
+  submission         FileSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  fileStageId        String?        @map("file_stage_id")
+  fileStage          FileStage?     @relation(fields: [fileStageId], references: [id], onDelete: SetNull)
+  documentId         String?        @unique @map("document_id")
+  document           Document?      @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  preparedBy         String         @map("prepared_by")
+  preparer           User           @relation("TippaniPreparedBy", fields: [preparedBy], references: [id])
+  subject            String         @db.Text
+  recommendation     String         @db.Text
+  referenceDocuments Json           @default("[]") @map("reference_documents")
+  preparedAt         DateTime       @default(now()) @map("prepared_at")
+
+  @@index([submissionId])
+  @@index([fileStageId])
+  @@index([preparedBy])
+  @@map("tippani_metadata")
 }
 
 // ---- Notifications ----

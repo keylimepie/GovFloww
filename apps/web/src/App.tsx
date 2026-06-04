@@ -16,6 +16,7 @@ import {
   Descriptions,
   Form,
   Input,
+  InputNumber,
   Layout,
   Menu,
   Modal,
@@ -58,18 +59,26 @@ import {
 } from '@ant-design/icons';
 import {
   AddCommentSchema,
+  ApproveSubmissionSchema,
   ChangePasswordSchema,
   ChangeUserStatusSchema,
+  CompleteTokAssignmentSchema,
   CreateBranchSchema,
   CreateDepartmentSchema,
+  CreateRayeRequestSchema,
   CreateSubmissionSchema,
+  CreateTokAssignmentSchema,
   CreateUserSchema,
   EnableMfaSchema,
   CreateWorkflowSchema,
+  ForwardToMinistrySchema,
   ForwardSubmissionSchema,
   HoldSubmissionSchema,
+  LoginSchema,
   RegisterSchema,
   RejectSubmissionSchema,
+  PrepareTippaniSchema,
+  RespondRayeRequestSchema,
   ROLE_LABELS,
   Role,
   STATUS_COLORS,
@@ -87,7 +96,13 @@ import FilePreviewModal from './components/FilePreviewModal';
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
-type Lookup = { id: string; name: string; code?: string; departmentId?: string; version?: number };
+type MetadataField = {
+  key: string;
+  label?: string;
+  type?: 'TEXT' | 'NUMBER' | 'DATE' | 'BOOLEAN' | string;
+  required?: boolean;
+};
+type Lookup = { id: string; name: string; code?: string; departmentId?: string; version?: number; metadataSchema?: MetadataField[] | null };
 type RoleLookup = { id: string; name: string; code: string; hierarchyLevel: number; permissions: string[]; isSystem: boolean };
 const DELEGATABLE_PERMISSIONS = [
   'user:view_branch',
@@ -129,6 +144,7 @@ type WorkflowStage = {
   assignedRole?: RoleLookup | string;
   slaDays: number;
   allowedActions: StageAction[];
+  requiredDocs?: string[];
 };
 type Submission = {
   id: string;
@@ -137,10 +153,12 @@ type Submission = {
   description?: string | null;
   status: string;
   publicTrackable?: boolean;
+  metadata?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
-  workflow?: { name: string; stages?: WorkflowStage[] };
+  workflow?: { name: string; code?: string | null; stages?: WorkflowStage[] };
   branch?: { name: string };
+  currentBranch?: { id: string; name: string; code?: string | null } | null;
   contractor?: { firstName: string; lastName: string; companyName?: string | null; email?: string };
   fileStages?: Array<{
     id: string;
@@ -149,6 +167,7 @@ type Submission = {
     completedAt?: string | null;
     slaDueAt?: string;
     stage: WorkflowStage;
+    branch?: { id: string; name: string; code?: string | null } | null;
     assignedOfficer?: { firstName: string; lastName: string; role?: Role } | null;
     parallelApprovals?: Array<{
       id: string;
@@ -175,6 +194,33 @@ type Submission = {
     uploader?: { firstName: string; lastName: string };
   }>;
 };
+type AvailableActionTarget = {
+  targetStageId?: string;
+  stageName?: string;
+  stageOrder?: number;
+  assignedRoleId?: string;
+  assignedRole?: RoleLookup | null;
+  targetBranchId?: string;
+  branchName?: string | null;
+  branchCode?: string | null;
+  recommended?: boolean;
+  reason?: string;
+};
+type AvailableAction = {
+  action: string;
+  label: string;
+  targets?: AvailableActionTarget[];
+  sakhaTargets?: string[];
+};
+type AvailableActionsResponse = {
+  canAct: boolean;
+  currentStage?: {
+    id: string;
+    name: string;
+    stageOrder: number;
+  };
+  actions: AvailableAction[];
+};
 type AuditEntry = {
   id: string;
   action: string;
@@ -183,6 +229,57 @@ type AuditEntry = {
   previousHash: string;
   rowHash: string;
   actor: { firstName: string; lastName: string; role: Role };
+};
+type DorInboxItem = {
+  id: string;
+  status: string;
+  targetSakha?: string;
+  requestText?: string;
+  responseText?: string | null;
+  taskDescription?: string | null;
+  responseNote?: string | null;
+  assignedAt?: string;
+  requestedAt?: string;
+  completedAt?: string | null;
+  respondedAt?: string | null;
+  submission: {
+    id: string;
+    trackingNumber: string;
+    title: string;
+    status: string;
+  };
+  fileStage?: {
+    stage?: { name: string };
+  };
+  assignedBy?: { id?: string; firstName: string; lastName: string };
+  assignedTo?: { id?: string; firstName: string; lastName: string };
+  requester?: { id?: string; firstName: string; lastName: string };
+  assignedOfficer?: { id?: string; firstName: string; lastName: string };
+  targetBranch?: { id: string; name: string; code?: string };
+};
+type DorTippani = {
+  id: string;
+  subject: string;
+  recommendation: string;
+  referenceDocuments?: string[];
+  preparedAt: string;
+  preparer?: { firstName: string; lastName: string; designation?: string | null };
+  document?: { id: string; originalName: string; sha256?: string | null };
+};
+type DorActionUser = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  designation?: string | null;
+  role?: { id: string; name: string; code: string };
+  branch?: { id: string; name: string; code?: string };
+};
+type DorBranch = Lookup & {
+  branchLevel?: number;
+  parentBranchId?: string | null;
+  clusterType?: string | null;
+  nepaliName?: string | null;
 };
 type OperationalReport = {
   totals: {
@@ -469,7 +566,7 @@ function LoginPage() {
   async function onFinish(values: LoginInput) {
     setLoading(true);
     try {
-      await login(values.email, values.password);
+      await login(validate(LoginSchema, values) as LoginInput);
       navigate('/dashboard');
     } catch (error) {
       message.error(getErrorMessage(error, 'Login failed. Check the account status and credentials.'));
@@ -565,9 +662,40 @@ function useAsyncData<T>(loader: () => Promise<T>, deps: DependencyList) {
 }
 
 function DashboardPage() {
+  const user = useAuthStore((state) => state.user);
+  const { message } = AntApp.useApp();
+  const [inboxAction, setInboxAction] = useState<{ type: 'tok' | 'raye'; item: DorInboxItem } | null>(null);
+  const [inboxRefresh, setInboxRefresh] = useState(0);
+  const can = (...permissions: string[]) =>
+    user?.permissions?.includes('*') || permissions.some((permission) => user?.permissions?.includes(permission));
   const { data, loading } = useAsyncData<Submission[]>(() => getData('/api/submissions'), []);
+  const { data: tokInbox, loading: tokLoading } = useAsyncData<DorInboxItem[]>(
+    () => can('submission:view_assigned') ? getData('/api/dor/tok/inbox') : Promise.resolve([]),
+    [user?.id, inboxRefresh],
+  );
+  const { data: rayeInbox, loading: rayeLoading } = useAsyncData<DorInboxItem[]>(
+    () => can('submission:raye_respond', 'submission:view_assigned') ? getData('/api/dor/raye/inbox') : Promise.resolve([]),
+    [user?.id, inboxRefresh],
+  );
+  async function submitInboxAction(values: Record<string, unknown>) {
+    if (!inboxAction) return;
+    try {
+      if (inboxAction.type === 'tok') {
+        await postData(`/api/dor/tok/${inboxAction.item.id}/complete`, validate(CompleteTokAssignmentSchema, values));
+        message.success('Tok completed.');
+      } else {
+        await postData(`/api/dor/raye/${inboxAction.item.id}/respond`, validate(RespondRayeRequestSchema, values));
+        message.success('Raye response submitted.');
+      }
+      setInboxAction(null);
+      setInboxRefresh((value) => value + 1);
+    } catch (error) {
+      message.error(getErrorMessage(error, 'Could not complete inbox action.'));
+    }
+  }
   const submissions = data || [];
-  const pending = submissions.filter((item) => !['APPROVED', 'ARCHIVED', 'REJECTED'].includes(item.status)).length;
+  const terminalStatuses = ['APPROVED', 'ARCHIVED', 'REJECTED', 'FORWARDED_TO_MINISTRY'];
+  const pending = submissions.filter((item) => !terminalStatuses.includes(item.status)).length;
   const onHold = submissions.filter((item) => item.status === 'ON_HOLD').length;
 
   return (
@@ -582,8 +710,106 @@ function DashboardPage() {
         <Card title="Latest submissions">
           <SubmissionTable data={submissions.slice(0, 6)} loading={loading} />
         </Card>
+        <Row gutter={[16, 16]}>
+          <Col xs={24} lg={12}>
+            <DorInboxCard title="Tok Inbox" kind="tok" items={tokInbox || []} loading={tokLoading} onAction={(item) => setInboxAction({ type: 'tok', item })} />
+          </Col>
+          <Col xs={24} lg={12}>
+            <DorInboxCard title="Raye Inbox" kind="raye" items={rayeInbox || []} loading={rayeLoading} onAction={(item) => setInboxAction({ type: 'raye', item })} />
+          </Col>
+        </Row>
       </Space>
+      <DorInboxActionModal action={inboxAction} onCancel={() => setInboxAction(null)} onSubmit={submitInboxAction} />
     </DashboardLayout>
+  );
+}
+
+function DorInboxCard({
+  title,
+  kind,
+  items,
+  loading,
+  onAction,
+}: {
+  title: string;
+  kind: 'tok' | 'raye';
+  items: DorInboxItem[];
+  loading?: boolean;
+  onAction: (item: DorInboxItem) => void;
+}) {
+  return (
+    <Card title={title} loading={loading}>
+      <List
+        dataSource={items.slice(0, 5)}
+        locale={{ emptyText: 'No pending items' }}
+        renderItem={(item) => (
+          <List.Item
+            actions={[
+              <NavLink key="open" to={`/submissions/${item.submission.id}`}>Open</NavLink>,
+              <Button key="action" type="link" onClick={() => onAction(item)}>
+                {kind === 'tok' ? 'Complete' : 'Respond'}
+              </Button>,
+            ]}
+          >
+            <List.Item.Meta
+              title={<Space><Text>{item.submission.trackingNumber}</Text><StatusTag status={item.submission.status} /></Space>}
+              description={
+                <Space direction="vertical" size={2}>
+                  <Text>{item.submission.title}</Text>
+                  <Text type="secondary">{item.fileStage?.stage?.name || item.targetSakha || item.status}</Text>
+                  {(item.taskDescription || item.requestText) && (
+                    <Text type="secondary">{item.taskDescription || item.requestText}</Text>
+                  )}
+                </Space>
+              }
+            />
+          </List.Item>
+        )}
+      />
+    </Card>
+  );
+}
+
+function DorInboxActionModal({
+  action,
+  onCancel,
+  onSubmit,
+}: {
+  action: { type: 'tok' | 'raye'; item: DorInboxItem } | null;
+  onCancel: () => void;
+  onSubmit: (values: Record<string, unknown>) => void;
+}) {
+  const [form] = Form.useForm();
+  useEffect(() => {
+    form.resetFields();
+  }, [action, form]);
+
+  return (
+    <Modal
+      open={Boolean(action)}
+      title={action?.type === 'tok' ? 'Complete Tok' : 'Respond to Raye'}
+      onCancel={onCancel}
+      onOk={() => form.submit()}
+      destroyOnClose
+    >
+      <Form form={form} layout="vertical" onFinish={onSubmit}>
+        <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 12 }}>
+          <Text strong>{action?.item.submission.trackingNumber}</Text>
+          <Text>{action?.item.submission.title}</Text>
+          {action?.item.taskDescription && <Text type="secondary">{action.item.taskDescription}</Text>}
+          {action?.item.requestText && <Text type="secondary">{action.item.requestText}</Text>}
+        </Space>
+        {action?.type === 'tok' ? (
+          <Form.Item name="responseNote" label="Response" rules={[{ required: true }]}>
+            <Input.TextArea rows={5} />
+          </Form.Item>
+        ) : (
+          <Form.Item name="responseText" label="Opinion" rules={[{ required: true }]}>
+            <Input.TextArea rows={6} />
+          </Form.Item>
+        )}
+      </Form>
+    </Modal>
   );
 }
 
@@ -628,10 +854,20 @@ function NewSubmissionPage() {
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
   const [loading, setLoading] = useState(false);
+  const [form] = Form.useForm();
   const { data } = useAsyncData<{ workflows: Lookup[]; branches: Lookup[] }>(
     () => getData('/api/lookups/bootstrap'),
     [],
   );
+  const selectedSubmissionType = Form.useWatch('submissionType', form);
+  const selectedWorkflow = useMemo(
+    () =>
+      (data?.workflows || []).find(
+        (workflow) => workflow.id === selectedSubmissionType || workflow.code === selectedSubmissionType || workflow.name === selectedSubmissionType,
+      ),
+    [data?.workflows, selectedSubmissionType],
+  );
+  const metadataFields = Array.isArray(selectedWorkflow?.metadataSchema) ? selectedWorkflow.metadataSchema : [];
 
   async function onFinish(values: unknown) {
     setLoading(true);
@@ -649,15 +885,36 @@ function NewSubmissionPage() {
   return (
     <DashboardLayout>
       <Card title="New submission">
-        <Form layout="vertical" onFinish={onFinish}>
-          <Form.Item name="workflowId" label="Workflow" rules={[{ required: true }]}>
-            <Select options={(data?.workflows || []).map((item) => ({ value: item.id, label: `${item.name} v${item.version}` }))} />
-          </Form.Item>
+        <Form form={form} layout="vertical" onFinish={onFinish}>
           <Form.Item name="branchId" label="Branch" rules={[{ required: true }]}>
             <Select options={(data?.branches || []).map((item) => ({ value: item.id, label: item.name }))} />
           </Form.Item>
+          <Form.Item name="submissionType" label="Submission type" rules={[{ required: true }]}>
+            <Select
+              options={(data?.workflows || []).map((item) => ({
+                value: item.code || item.name,
+                label: `${item.code ? `${item.code} - ` : ''}${item.name}${item.version ? ` v${item.version}` : ''}`,
+              }))}
+            />
+          </Form.Item>
           <Form.Item name="title" label="Title" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="Description"><Input.TextArea rows={4} /></Form.Item>
+          {metadataFields.map((field) => (
+            <Form.Item
+              key={field.key}
+              name={['metadata', field.key]}
+              label={field.label || field.key}
+              rules={[{ required: Boolean(field.required) }]}
+            >
+              {field.type === 'NUMBER' ? (
+                <InputNumber className="full-width-input" />
+              ) : field.type === 'BOOLEAN' ? (
+                <Select options={[{ value: true, label: 'Yes' }, { value: false, label: 'No' }]} />
+              ) : (
+                <Input />
+              )}
+            </Form.Item>
+          ))}
           <Button type="primary" htmlType="submit" loading={loading} icon={<SendOutlined />}>Submit file metadata</Button>
         </Form>
       </Card>
@@ -670,9 +927,82 @@ function SubmissionDetailPage() {
   const { message } = AntApp.useApp();
   const user = useAuthStore((state) => state.user);
   const [actionOpen, setActionOpen] = useState<string | null>(null);
+  const [tippaniRefresh, setTippaniRefresh] = useState(0);
+  const [dorActivityRefresh, setDorActivityRefresh] = useState(0);
+  const [dorActivityAction, setDorActivityAction] = useState<{ type: 'tok' | 'raye'; item: DorInboxItem } | null>(null);
   const { data, loading, setData } = useAsyncData<Submission>(() => getData(`/api/submissions/${id}`), [id]);
   const can = (...permissions: string[]) =>
     user?.permissions?.includes('*') || permissions.some((permission) => user?.permissions?.includes(permission));
+  const canRouteAcrossDor =
+    user?.role === Role.SUPER_ADMIN ||
+    user?.role === Role.DEPARTMENT_ADMIN ||
+    can('*');
+  const needsDorActionLookups = can('submission:tok_assign', 'submission:raye_request', 'submission:forward');
+  const { data: dorUsers } = useAsyncData<DorActionUser[]>(
+    () => needsDorActionLookups ? getData('/api/dor/users') : Promise.resolve([]),
+    [user?.id],
+  );
+  const { data: dorBranches } = useAsyncData<DorBranch[]>(
+    () => can('submission:tok_assign', 'submission:raye_request', 'submission:forward') ? getData('/api/dor/branches') : Promise.resolve([]),
+    [user?.id],
+  );
+  const { data: tippaniList } = useAsyncData<DorTippani[]>(
+    () => id ? getData(`/api/dor/submissions/${id}/tippani`) : Promise.resolve([]),
+    [id, tippaniRefresh],
+  );
+  const { data: tokList } = useAsyncData<DorInboxItem[]>(
+    () => id ? getData(`/api/dor/submissions/${id}/tok`) : Promise.resolve([]),
+    [id, dorActivityRefresh],
+  );
+  const { data: rayeList } = useAsyncData<DorInboxItem[]>(
+    () => id ? getData(`/api/dor/submissions/${id}/raye`) : Promise.resolve([]),
+    [id, dorActivityRefresh],
+  );
+  const activeStageForPolicy = data?.fileStages?.at(-1)?.stage;
+  const { data: actionPolicy } = useAsyncData<AvailableActionsResponse | null>(
+    () => id && activeStageForPolicy ? getData(`/api/submissions/${id}/available-actions`) : Promise.resolve(null),
+    [id, activeStageForPolicy?.id, data?.updatedAt],
+  );
+
+  async function submitDorActivityAction(values: Record<string, unknown>) {
+    if (!dorActivityAction || !id) return;
+    try {
+      if (dorActivityAction.type === 'tok') {
+        await postData(`/api/dor/tok/${dorActivityAction.item.id}/complete`, validate(CompleteTokAssignmentSchema, values));
+        message.success('Tok completed.');
+      } else {
+        await postData(`/api/dor/raye/${dorActivityAction.item.id}/respond`, validate(RespondRayeRequestSchema, values));
+        message.success('Raye response submitted.');
+      }
+      setDorActivityAction(null);
+      setDorActivityRefresh((value) => value + 1);
+      setData(await getData(`/api/submissions/${id}`));
+    } catch (error) {
+      message.error(getErrorMessage(error, 'Could not complete DOR activity.'));
+    }
+  }
+
+  async function recallTok(tokId: string) {
+    if (!id) return;
+    try {
+      await postData(`/api/dor/tok/${tokId}/recall`);
+      message.success('Tok recalled.');
+      setDorActivityRefresh((value) => value + 1);
+    } catch (error) {
+      message.error(getErrorMessage(error, 'Could not recall Tok.'));
+    }
+  }
+
+  async function cancelRaye(rayeId: string) {
+    if (!id) return;
+    try {
+      await postData(`/api/dor/raye/${rayeId}/cancel`);
+      message.success('Raye cancelled.');
+      setDorActivityRefresh((value) => value + 1);
+    } catch (error) {
+      message.error(getErrorMessage(error, 'Could not cancel Raye.'));
+    }
+  }
 
   async function runAction(values: Record<string, unknown>) {
     if (!id || !actionOpen) return;
@@ -687,13 +1017,44 @@ function SubmissionDetailPage() {
         return;
       }
 
+      if (actionOpen === 'tippani') {
+        await postData(`/api/dor/submissions/${id}/tippani`, validate(PrepareTippaniSchema, values));
+        setData(await getData(`/api/submissions/${id}`));
+        setTippaniRefresh((value) => value + 1);
+        setActionOpen(null);
+        message.success('Tippani prepared.');
+        return;
+      }
+
+      if (actionOpen === 'tok') {
+        await postData(`/api/dor/submissions/${id}/tok`, validate(CreateTokAssignmentSchema, values));
+        setData(await getData(`/api/submissions/${id}`));
+        setDorActivityRefresh((value) => value + 1);
+        setActionOpen(null);
+        message.success('Tok assignment sent.');
+        return;
+      }
+
+      if (actionOpen === 'raye') {
+        await postData(`/api/dor/submissions/${id}/raye`, validate(CreateRayeRequestSchema, values));
+        setData(await getData(`/api/submissions/${id}`));
+        setDorActivityRefresh((value) => value + 1);
+        setActionOpen(null);
+        message.success('Raye request sent.');
+        return;
+      }
+
       const schema = actionOpen === 'forward'
         ? ForwardSubmissionSchema
-        : actionOpen === 'reject'
-          ? RejectSubmissionSchema
-          : actionOpen === 'hold'
-            ? HoldSubmissionSchema
-            : AddCommentSchema;
+        : actionOpen === 'approve'
+          ? ApproveSubmissionSchema
+          : actionOpen === 'forward-to-ministry'
+            ? ForwardToMinistrySchema
+            : actionOpen === 'reject'
+              ? RejectSubmissionSchema
+              : actionOpen === 'hold'
+                ? HoldSubmissionSchema
+                : AddCommentSchema;
       const url = actionOpen === 'comment'
         ? `/api/submissions/${id}/comments`
         : `/api/submissions/${id}/${actionOpen}`;
@@ -722,8 +1083,15 @@ function SubmissionDetailPage() {
     }
   }
 
-  const currentStage = data?.fileStages?.at(-1)?.stage;
+  const currentStage = activeStageForPolicy;
+  const allStages = data?.workflow?.stages || [];
   const priorStages = data?.fileStages?.map((item) => item.stage).filter((stage) => stage.id !== currentStage?.id) || [];
+  const currentActions = currentStage?.allowedActions || [];
+  const policyAllows = (...actions: StageAction[]) =>
+    actions.some((action) => actionPolicy?.actions?.some((item) => item.action === action));
+  const voPercentage = Number(data?.metadata?.vo_percentage);
+  const hasVoPercentage = Number.isFinite(voPercentage);
+  const requiresTippani = currentStage?.requiredDocs?.includes('TIPPANI') || currentActions.includes(StageAction.TIPPANI);
 
   return (
     <DashboardLayout>
@@ -738,9 +1106,27 @@ function SubmissionDetailPage() {
           </div>
           <Descriptions column={{ xs: 1, md: 2 }} bordered>
             <Descriptions.Item label="Workflow">{data?.workflow?.name}</Descriptions.Item>
-            <Descriptions.Item label="Branch">{data?.branch?.name}</Descriptions.Item>
-            <Descriptions.Item label="Contractor">{data?.contractor?.companyName || `${data?.contractor?.firstName} ${data?.contractor?.lastName}`}</Descriptions.Item>
+            <Descriptions.Item label="Origin office">{data?.branch?.name}</Descriptions.Item>
+            <Descriptions.Item label="Current office">{data?.currentBranch?.name || data?.branch?.name}</Descriptions.Item>
+            <Descriptions.Item label="Submitter">{data?.contractor?.companyName || `${data?.contractor?.firstName} ${data?.contractor?.lastName}`}</Descriptions.Item>
             <Descriptions.Item label="Current stage">{currentStage?.name || 'Complete'}</Descriptions.Item>
+            {hasVoPercentage && (
+              <Descriptions.Item label="VO percentage">
+                <Space>
+                  <Tag color={voPercentage < 10 ? 'green' : voPercentage < 15 ? 'gold' : 'red'}>
+                    {voPercentage.toFixed(2)}%
+                  </Tag>
+                  <Text type="secondary">
+                    {voPercentage < 10 ? 'SDE authority' : voPercentage < 15 ? 'SE authority' : 'HQ escalation'}
+                  </Text>
+                </Space>
+              </Descriptions.Item>
+            )}
+            {requiresTippani && (
+              <Descriptions.Item label="Tippani">
+                <Tag color="blue">Required before forward</Tag>
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="Public tracking">
               {can('submission:manage_public_tracking') ? (
                 <Switch
@@ -757,11 +1143,16 @@ function SubmissionDetailPage() {
             </Descriptions.Item>
           </Descriptions>
           <Space wrap className="action-bar">
-            {can('submission:forward') && <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => setActionOpen('forward')}>Forward</Button>}
-            {can('submission:reject_any', 'submission:reject_prev') && <Button danger onClick={() => setActionOpen('reject')}>Reject</Button>}
-            {can('submission:hold') && <Button onClick={() => setActionOpen('hold')}>Hold</Button>}
-            {can('submission:comment', 'submission:respond_query') && <Button onClick={() => setActionOpen('comment')}>Comment</Button>}
-            {can('submission:sign_t1', 'submission:sign_t2') && <Button icon={<SafetyCertificateOutlined />} onClick={() => setActionOpen('sign')}>Sign Document</Button>}
+            {policyAllows(StageAction.FORWARD) && <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => setActionOpen('forward')}>Forward</Button>}
+            {policyAllows(StageAction.APPROVE) && <Button icon={<CheckCircleOutlined />} onClick={() => setActionOpen('approve')}>Approve</Button>}
+            {policyAllows(StageAction.TIPPANI) && <Button icon={<FileTextOutlined />} onClick={() => setActionOpen('tippani')}>Prepare Tippani</Button>}
+            {policyAllows(StageAction.TOK) && <Button icon={<TeamOutlined />} onClick={() => setActionOpen('tok')}>Tok</Button>}
+            {policyAllows(StageAction.RAYE) && <Button icon={<BranchesOutlined />} onClick={() => setActionOpen('raye')}>Raye</Button>}
+            {policyAllows(StageAction.FORWARD_TO_MINISTRY) && <Button icon={<BankOutlined />} onClick={() => setActionOpen('forward-to-ministry')}>Forward to Ministry</Button>}
+            {policyAllows(StageAction.REJECT) && <Button danger onClick={() => setActionOpen('reject')}>Reject</Button>}
+            {policyAllows(StageAction.HOLD) && <Button onClick={() => setActionOpen('hold')}>Hold</Button>}
+            {policyAllows(StageAction.COMMENT) && <Button onClick={() => setActionOpen('comment')}>Comment</Button>}
+            {policyAllows(StageAction.SIGN) && <Button icon={<SafetyCertificateOutlined />} onClick={() => setActionOpen('sign')}>Sign Document</Button>}
           </Space>
         </Card>
         <Row gutter={[16, 16]}>
@@ -771,14 +1162,41 @@ function SubmissionDetailPage() {
               <SubmissionTimeline submission={data} />
             </Space>
           </Col>
-          <Col xs={24} lg={10}><CommentsCard submission={data} /></Col>
+          <Col xs={24} lg={10}>
+            <Space direction="vertical" size={20} style={{ width: '100%' }}>
+              <DorActivityCard
+                tokItems={tokList || []}
+                rayeItems={rayeList || []}
+                userId={user?.id || null}
+                onAction={setDorActivityAction}
+                onRecallTok={recallTok}
+                onCancelRaye={cancelRaye}
+              />
+              <TippaniCard submission={data} items={tippaniList || []} />
+              <CommentsCard submission={data} />
+            </Space>
+          </Col>
         </Row>
       </Space>
       <ActionModal
         action={actionOpen}
+        allStages={allStages}
+        currentStage={currentStage}
+        currentOfficeBranchId={data?.currentBranch?.id || data?.fileStages?.at(-1)?.branch?.id || user?.branchId || null}
+        userBranchId={user?.branchId || null}
         priorStages={priorStages}
+        documents={data?.documents || []}
+        dorUsers={dorUsers || []}
+        dorBranches={dorBranches || []}
+        availableActions={actionPolicy?.actions || []}
+        canRouteAcrossDor={Boolean(canRouteAcrossDor)}
         onCancel={() => setActionOpen(null)}
         onSubmit={runAction}
+      />
+      <DorInboxActionModal
+        action={dorActivityAction}
+        onCancel={() => setDorActivityAction(null)}
+        onSubmit={submitDorActivityAction}
       />
     </DashboardLayout>
   );
@@ -786,24 +1204,206 @@ function SubmissionDetailPage() {
 
 function ActionModal({
   action,
+  allStages,
+  currentStage,
+  currentOfficeBranchId,
+  userBranchId,
   priorStages,
+  documents,
+  dorUsers,
+  dorBranches,
+  availableActions,
+  canRouteAcrossDor,
   onCancel,
   onSubmit,
 }: {
   action: string | null;
+  allStages: WorkflowStage[];
+  currentStage?: WorkflowStage;
+  currentOfficeBranchId?: string | null;
+  userBranchId?: string | null;
   priorStages: WorkflowStage[];
+  documents: NonNullable<Submission['documents']>;
+  dorUsers: DorActionUser[];
+  dorBranches: DorBranch[];
+  availableActions: AvailableAction[];
+  canRouteAcrossDor: boolean;
   onCancel: () => void;
   onSubmit: (values: Record<string, unknown>) => void;
 }) {
   const [form] = Form.useForm();
+  const selectedTargetBranchId = Form.useWatch('targetBranchId', form);
+  const selectedTargetStageId = Form.useWatch('targetStageId', form);
+  const selectedTargetStage = allStages.find((stage) => stage.id === selectedTargetStageId);
+  const forwardTargets = availableActions.find((item) => item.action === StageAction.FORWARD)?.targets || [];
+  const forwardStageOptions = forwardTargets.length > 0
+    ? Array.from(new Map(forwardTargets.map((target) => [
+        target.targetStageId,
+        {
+          value: target.targetStageId,
+          label: `${target.stageOrder ?? ''}. ${target.stageName || 'Stage'}${target.recommended ? ' - recommended' : ''}`,
+        },
+      ])).values()).filter((item) => item.value)
+    : allStages
+        .filter((stage) => stage.id !== currentStage?.id)
+        .map((stage) => ({ value: stage.id, label: `${stage.stageOrder}. ${stage.name}` }));
+  const forwardBranchIds = new Set(
+    forwardTargets
+      .filter((target) => !selectedTargetStageId || target.targetStageId === selectedTargetStageId)
+      .map((target) => target.targetBranchId)
+      .filter(Boolean),
+  );
+  const ownOfficeBranchId = userBranchId || currentOfficeBranchId || null;
+  const restrictedToOwnOffice = (action === 'tok' || action === 'raye') && !canRouteAcrossDor;
+  const branchOptions = action === 'forward' && forwardBranchIds.size > 0
+    ? dorBranches.filter((item) => forwardBranchIds.has(item.id))
+    : restrictedToOwnOffice && ownOfficeBranchId
+      ? dorBranches.filter((item) => item.id === ownOfficeBranchId)
+      : dorBranches;
+  const selectedOfficeBranchId = selectedTargetBranchId || (restrictedToOwnOffice ? ownOfficeBranchId : undefined);
+  const officeUsers = dorUsers.filter((item) => {
+    const officeMatches = !selectedOfficeBranchId || item.branch?.id === selectedOfficeBranchId;
+    const roleMatches =
+      action !== 'forward' ||
+      !selectedTargetStage?.assignedRoleId ||
+      item.role?.id === selectedTargetStage.assignedRoleId;
+    return officeMatches && roleMatches;
+  });
+  const officerOptions = officeUsers.map((item) => ({
+    value: item.id,
+    label: `${item.firstName} ${item.lastName} - ${item.designation || item.role?.name || item.email}${item.branch?.name ? ` (${item.branch.name})` : ''}`,
+  }));
+
   useEffect(() => {
     form.resetFields();
-  }, [action, form]);
+    if (restrictedToOwnOffice && ownOfficeBranchId) {
+      form.setFieldsValue({ targetBranchId: ownOfficeBranchId });
+    }
+  }, [action, form, ownOfficeBranchId, restrictedToOwnOffice]);
 
   return (
     <Modal open={!!action} title={action?.toUpperCase()} onCancel={onCancel} onOk={() => form.submit()} destroyOnClose>
-      <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ commentType: 'COMMENT' }}>
-        {action === 'forward' && <Form.Item name="comment" label="Comment"><Input.TextArea rows={3} /></Form.Item>}
+      <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ commentType: 'COMMENT', continueFile: false }}>
+        {action === 'forward' && (
+          <>
+            <Form.Item name="targetStageId" label="Target stage" rules={[{ required: true }]}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                onChange={() => {
+                  form.setFieldValue('targetBranchId', undefined);
+                  form.setFieldValue('assignedTo', undefined);
+                }}
+                options={forwardStageOptions}
+              />
+            </Form.Item>
+            <Form.Item name="targetBranchId" label="Target office">
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                onChange={() => form.setFieldValue('assignedTo', undefined)}
+                options={branchOptions.map((item) => ({
+                  value: item.id,
+                  label: `${item.nepaliName ? `${item.nepaliName} / ` : ''}${item.name}${item.code ? ` (${item.code})` : ''}`,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item name="assignedTo" label="Officer">
+              <Select
+                allowClear
+                showSearch
+                disabled={!selectedOfficeBranchId}
+                optionFilterProp="label"
+                options={officerOptions}
+              />
+            </Form.Item>
+            <Form.Item name="comment" label="Comment"><Input.TextArea rows={3} /></Form.Item>
+          </>
+        )}
+        {action === 'approve' && <Form.Item name="comment" label="Comment"><Input.TextArea rows={3} /></Form.Item>}
+        {action === 'forward-to-ministry' && (
+          <>
+            <Form.Item name="ministryReference" label="Ministry reference"><Input maxLength={100} /></Form.Item>
+            <Form.Item name="comment" label="Comment"><Input.TextArea rows={3} /></Form.Item>
+          </>
+        )}
+        {action === 'tippani' && (
+          <>
+            <Form.Item name="subject" label="Subject" rules={[{ required: true }]}><Input maxLength={500} /></Form.Item>
+            <Form.Item name="recommendation" label="Recommendation" rules={[{ required: true }]}><Input.TextArea rows={5} /></Form.Item>
+            <Form.Item name="documentId" label="Attach document">
+              <Select allowClear options={documents.map((doc) => ({ value: doc.id, label: doc.originalName }))} />
+            </Form.Item>
+          </>
+        )}
+        {action === 'tok' && (
+          <>
+            <Form.Item name="targetBranchId" label="Office" rules={[{ required: true }]}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                disabled={restrictedToOwnOffice && Boolean(ownOfficeBranchId)}
+                onChange={() => form.setFieldValue('tokTo', undefined)}
+                options={branchOptions.map((item) => ({
+                  value: item.id,
+                  label: `${item.nepaliName ? `${item.nepaliName} / ` : ''}${item.name}${item.code ? ` (${item.code})` : ''}`,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item name="tokTo" label="Assign to" rules={[{ required: true }]}>
+              <Select
+                showSearch
+                disabled={!selectedOfficeBranchId}
+                optionFilterProp="label"
+                options={officerOptions}
+              />
+            </Form.Item>
+            <Form.Item name="taskDescription" label="Task"><Input.TextArea rows={4} /></Form.Item>
+            <Form.Item name="continueFile" label="Continue file through recipient" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item name="targetStageId" label="Recipient stage">
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                options={allStages
+                  .filter((stage) => stage.id !== currentStage?.id)
+                  .map((stage) => ({ value: stage.id, label: `${stage.stageOrder}. ${stage.name}` }))}
+              />
+            </Form.Item>
+          </>
+        )}
+        {action === 'raye' && (
+          <>
+            <Form.Item name="targetSakha" label="Sakha" rules={[{ required: true }]}>
+              <Select options={['PRABIDHIK', 'PRASASAN', 'LEKHA', 'KAANUN'].map((value) => ({ value, label: value }))} />
+            </Form.Item>
+            <Form.Item name="targetBranchId" label="Target branch" rules={[{ required: true }]}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                disabled={restrictedToOwnOffice && Boolean(ownOfficeBranchId)}
+                onChange={() => form.setFieldValue('assignedTo', undefined)}
+                options={branchOptions.map((item) => ({
+                  value: item.id,
+                  label: `${item.nepaliName ? `${item.nepaliName} / ` : ''}${item.name}${item.code ? ` (${item.code})` : ''}`,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item name="assignedTo" label="Officer">
+              <Select
+                allowClear
+                showSearch
+                disabled={!selectedOfficeBranchId}
+                optionFilterProp="label"
+                options={officerOptions}
+              />
+            </Form.Item>
+            <Form.Item name="requestText" label="Request" rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
+          </>
+        )}
         {action === 'reject' && (
           <>
             <Form.Item name="targetStageId" label="Return to stage" rules={[{ required: true }]}>
@@ -845,6 +1445,7 @@ function SubmissionTimeline({ submission }: { submission: Submission | null }) {
           children: (
             <Space direction="vertical" size={2}>
               <Text strong>{stageName}</Text>
+              {item.branch?.name && <Text type="secondary">Office: {item.branch.name}</Text>}
               {startedAt && <Text type="secondary">{item.status} since {new Date(startedAt).toLocaleString()}</Text>}
               {item.slaDueAt && <Text type="secondary">SLA due {new Date(item.slaDueAt).toLocaleString()}</Text>}
               {item.parallelApprovals && item.parallelApprovals.length > 0 && (
@@ -963,6 +1564,131 @@ function DocumentsCard({ submission, onUploadSuccess }: { submission: Submission
         file={previewFile}
       />
     </Space>
+  );
+}
+
+function DorActivityCard({
+  tokItems,
+  rayeItems,
+  userId,
+  onAction,
+  onRecallTok,
+  onCancelRaye,
+}: {
+  tokItems: DorInboxItem[];
+  rayeItems: DorInboxItem[];
+  userId: string | null;
+  onAction: (action: { type: 'tok' | 'raye'; item: DorInboxItem }) => void;
+  onRecallTok: (tokId: string) => void;
+  onCancelRaye: (rayeId: string) => void;
+}) {
+  const items = [
+    ...tokItems.map((item) => ({ kind: 'tok' as const, item })),
+    ...rayeItems.map((item) => ({ kind: 'raye' as const, item })),
+  ].sort((a, b) => {
+    const aDate = a.item.assignedAt || a.item.requestedAt || '';
+    const bDate = b.item.assignedAt || b.item.requestedAt || '';
+    return bDate.localeCompare(aDate);
+  });
+
+  return (
+    <Card title="Tok and Raye">
+      <List
+        dataSource={items}
+        locale={{ emptyText: 'No Tok or Raye activity' }}
+        renderItem={({ kind, item }) => {
+          const activeTok = kind === 'tok' && item.status === 'ACTIVE';
+          const pendingRaye = kind === 'raye' && item.status === 'PENDING';
+          const canRecallTok = activeTok && item.assignedBy?.id === userId;
+          const canCancelRaye = pendingRaye && item.requester?.id === userId;
+          const actor = kind === 'tok' ? item.assignedBy : item.requester;
+          const recipient = kind === 'tok' ? item.assignedTo : item.assignedOfficer;
+          const body = kind === 'tok' ? item.taskDescription : item.requestText;
+          const response = kind === 'tok' ? item.responseNote : item.responseText;
+          const timestamp = item.assignedAt || item.requestedAt;
+
+          return (
+            <List.Item
+              actions={[
+                activeTok ? <Button key="complete" type="link" onClick={() => onAction({ type: 'tok', item })}>Complete</Button> : null,
+                pendingRaye ? <Button key="respond" type="link" onClick={() => onAction({ type: 'raye', item })}>Respond</Button> : null,
+                canRecallTok ? <Button key="recall" type="link" danger onClick={() => onRecallTok(item.id)}>Recall</Button> : null,
+                canCancelRaye ? <Button key="cancel" type="link" danger onClick={() => onCancelRaye(item.id)}>Cancel</Button> : null,
+              ].filter(Boolean)}
+            >
+              <List.Item.Meta
+                title={
+                  <Space wrap>
+                    <Tag color={kind === 'tok' ? 'blue' : 'purple'}>{kind === 'tok' ? 'TOK' : 'RAYE'}</Tag>
+                    <Tag>{item.status}</Tag>
+                    {item.targetSakha && <Tag>{item.targetSakha}</Tag>}
+                  </Space>
+                }
+                description={
+                  <Space direction="vertical" size={3}>
+                    {body && <Text>{body}</Text>}
+                    <Text type="secondary">
+                      {actor ? `From ${actor.firstName} ${actor.lastName}` : 'Requested'}
+                      {recipient ? ` to ${recipient.firstName} ${recipient.lastName}` : ''}
+                      {item.targetBranch?.name ? ` (${item.targetBranch.name})` : ''}
+                    </Text>
+                    {response && <Text type="secondary">Response: {response}</Text>}
+                    {timestamp && <Text type="secondary">{new Date(timestamp).toLocaleString()}</Text>}
+                  </Space>
+                }
+              />
+            </List.Item>
+          );
+        }}
+      />
+    </Card>
+  );
+}
+
+function TippaniCard({ submission, items }: { submission: Submission | null; items: DorTippani[] }) {
+  const { message } = AntApp.useApp();
+
+  async function downloadTippani(item: DorTippani) {
+    if (!submission || !item.document?.id) return;
+    try {
+      const data = await getData<{ url: string }>(`/api/submissions/${submission.id}/documents/${item.document.id}/url`);
+      window.open(data.url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      message.error(getErrorMessage(error, 'Could not open Tippani PDF.'));
+    }
+  }
+
+  return (
+    <Card title="Tippani">
+      <List
+        dataSource={items}
+        locale={{ emptyText: 'No Tippani prepared' }}
+        renderItem={(item) => (
+          <List.Item
+            actions={[
+              item.document?.id ? (
+                <Button key="pdf" type="link" icon={<DownloadOutlined />} onClick={() => downloadTippani(item)}>
+                  PDF
+                </Button>
+              ) : null,
+            ].filter(Boolean)}
+          >
+            <List.Item.Meta
+              title={<Text strong>{item.subject}</Text>}
+              description={
+                <Space direction="vertical" size={4}>
+                  <Text>{item.recommendation}</Text>
+                  <Text type="secondary">
+                    {item.preparer ? `${item.preparer.firstName} ${item.preparer.lastName}` : 'Prepared'} - {new Date(item.preparedAt).toLocaleString()}
+                  </Text>
+                  {item.document?.originalName && <Text type="secondary">{item.document.originalName}</Text>}
+                </Space>
+              }
+            />
+          </List.Item>
+        )}
+      />
+    </Card>
   );
 }
 
@@ -1350,7 +2076,13 @@ function OrganisationPage() {
 }
 
 function TrackPage() {
-  const [result, setResult] = useState<Submission | null>(null);
+  const [result, setResult] = useState<(Submission & {
+    workflowName?: string;
+    submittedAt?: string;
+    expectedCompletionAt?: string | null;
+    remainingSlaDays?: number | null;
+    currentStep?: { stageName: string; status: string; receivedAt?: string } | null;
+  }) | null>(null);
   const [loading, setLoading] = useState(false);
   const { message } = AntApp.useApp();
 
@@ -1371,20 +2103,50 @@ function TrackPage() {
       <Card>
         <Form layout="inline" onFinish={onFinish}>
           <Form.Item name="trackingNumber" rules={[{ required: true }]}>
-            <Input placeholder="2026-PWD-0001" />
+            <Input placeholder="DOR/RD-KTM/2082-83/VO/0001" />
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={loading} icon={<FileSearchOutlined />}>Track</Button>
         </Form>
       </Card>
       {result && (
-        <Card title={result.trackingNumber}>
-          <Descriptions bordered column={1}>
-            <Descriptions.Item label="Title">{result.title}</Descriptions.Item>
-            <Descriptions.Item label="Workflow">{result.workflow?.name || (result as any).workflowName}</Descriptions.Item>
-            <Descriptions.Item label="Status"><StatusTag status={result.status} /></Descriptions.Item>
-          </Descriptions>
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Card title={result.trackingNumber}>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={8}>
+                <Statistic title="Status" value={result.status.replaceAll('_', ' ')} />
+              </Col>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="Current public step"
+                  value={result.currentStep?.stageName || 'Completed'}
+                />
+              </Col>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="SLA remaining"
+                  value={
+                    result.remainingSlaDays == null
+                      ? 'N/A'
+                      : result.remainingSlaDays < 0
+                        ? `${Math.abs(result.remainingSlaDays)} day(s) overdue`
+                        : `${result.remainingSlaDays} day(s)`
+                  }
+                />
+              </Col>
+            </Row>
+            <Descriptions bordered column={{ xs: 1, md: 2 }} style={{ marginTop: 16 }}>
+              <Descriptions.Item label="File title">{result.title}</Descriptions.Item>
+              <Descriptions.Item label="Workflow">{result.workflow?.name || result.workflowName}</Descriptions.Item>
+              <Descriptions.Item label="Overall status"><StatusTag status={result.status} /></Descriptions.Item>
+              <Descriptions.Item label="Submitted">{new Date(result.submittedAt || result.createdAt).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="Expected completion">
+                {result.expectedCompletionAt ? new Date(result.expectedCompletionAt).toLocaleString() : 'Not available'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Public detail level">General stage progress only</Descriptions.Item>
+            </Descriptions>
+          </Card>
           <SubmissionTimeline submission={result} />
-        </Card>
+        </Space>
       )}
     </Space>
   );

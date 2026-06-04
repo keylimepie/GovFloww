@@ -19,11 +19,14 @@ import { Roles, RequirePermissions, CurrentUser, ClientIp } from '../common/deco
 import { ZodValidationPipe } from '../common/pipes';
 import {
   Role,
+  INTERNAL_ROLES,
   CreateWorkflowSchema,
+  CreateRoutingRuleSchema,
   CreateStageSchema,
   UpdateWorkflowSchema,
 } from '@govflow/shared';
 import type {
+  CreateRoutingRuleInput,
   CreateWorkflowInput,
   CreateStageInput,
   UpdateWorkflowInput,
@@ -47,15 +50,7 @@ export class WorkflowsController {
   }
 
   @Get()
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.DEPARTMENT_ADMIN,
-    Role.BRANCH_ADMIN,
-    Role.SENIOR_ENGINEER,
-    Role.ENGINEER,
-    Role.SUB_ENGINEER,
-    Role.ENTRY_DESK,
-  )
+  @Roles(...INTERNAL_ROLES)
   async findAll(
     @CurrentUser() user: JwtPayload,
     @Query('departmentId') departmentId?: string,
@@ -71,15 +66,7 @@ export class WorkflowsController {
   }
 
   @Get(':id')
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.DEPARTMENT_ADMIN,
-    Role.BRANCH_ADMIN,
-    Role.SENIOR_ENGINEER,
-    Role.ENGINEER,
-    Role.SUB_ENGINEER,
-    Role.ENTRY_DESK,
-  )
+  @Roles(...INTERNAL_ROLES)
   async findOne(@Param('id') id: string) {
     const workflow = await this.workflowsService.findOne(id);
     return { success: true, data: workflow };
@@ -118,6 +105,19 @@ export class WorkflowsController {
   ) {
     const stage = await this.workflowsService.addStage(workflowId, dto, user.sub, ip);
     return { success: true, data: stage };
+  }
+
+  @Post(':workflowId/stages/:stageId/routing-rules')
+  @RequirePermissions('workflow:update')
+  async addRoutingRule(
+    @Param('workflowId') workflowId: string,
+    @Param('stageId') stageId: string,
+    @Body(new ZodValidationPipe(CreateRoutingRuleSchema)) dto: CreateRoutingRuleInput,
+    @CurrentUser() user: JwtPayload,
+    @ClientIp() ip: string,
+  ) {
+    const rule = await this.workflowsService.addRoutingRule(workflowId, stageId, dto, user.sub, ip);
+    return { success: true, data: rule };
   }
 
   @Delete(':workflowId/stages/:stageId')

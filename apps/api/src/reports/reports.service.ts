@@ -7,7 +7,7 @@ export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getOperationalSummary(user: JwtPayload) {
-    const where = this.buildSubmissionScope(user);
+    const where = await this.buildSubmissionScope(user);
     const now = new Date();
 
     const [submissions, activeStages, breachedStages] = await Promise.all([
@@ -22,6 +22,7 @@ export class ReportsService {
           createdAt: true,
           updatedAt: true,
           branch: { select: { id: true, name: true } },
+          currentBranch: { select: { id: true, name: true } },
           workflow: { select: { id: true, name: true, departmentId: true } },
         },
       }),
@@ -41,6 +42,7 @@ export class ReportsService {
               trackingNumber: true,
               title: true,
               branch: { select: { name: true } },
+              currentBranch: { select: { name: true } },
               workflow: { select: { name: true } },
             },
           },
@@ -62,6 +64,7 @@ export class ReportsService {
               trackingNumber: true,
               title: true,
               branch: { select: { name: true } },
+              currentBranch: { select: { name: true } },
               workflow: { select: { name: true } },
             },
           },
@@ -73,14 +76,14 @@ export class ReportsService {
       totals: this.calculateTotals(submissions, breachedStages.length),
       byStatus: this.countBy(submissions, (submission) => submission.status),
       byWorkflow: this.countBy(submissions, (submission) => submission.workflow.name),
-      byBranch: this.countBy(submissions, (submission) => submission.branch.name),
+      byBranch: this.countBy(submissions, (submission) => submission.currentBranch?.name || submission.branch.name),
       workload: this.buildWorkload(activeStages, now),
       slaBreaches: breachedStages.map((stage) => ({
         fileStageId: stage.id,
         trackingNumber: stage.submission.trackingNumber,
         title: stage.submission.title,
         workflowName: stage.submission.workflow.name,
-        branchName: stage.submission.branch.name,
+        branchName: stage.submission.currentBranch?.name || stage.submission.branch.name,
         stageName: stage.stage.name,
         slaDueAt: stage.slaDueAt,
         daysOverdue: this.daysBetween(stage.slaDueAt, now),
@@ -135,7 +138,216 @@ export class ReportsService {
     return rows.map((row) => row.map((cell) => this.escapeCsv(cell)).join(',')).join('\n');
   }
 
-  private buildSubmissionScope(user: JwtPayload) {
+  async getFileFlowReport(user: JwtPayload) {
+    const where = await this.buildSubmissionScope(user);
+    const submissions = await this.prisma.fileSubmission.findMany({
+      where,
+      select: {
+        id: true,
+        trackingNumber: true,
+        title: true,
+        status: true,
+        createdAt: true,
+        branch: { select: { name: true, code: true } },
+        currentBranch: { select: { name: true, code: true } },
+        workflow: { select: { name: true } },
+        fileStages: {
+          orderBy: { startedAt: 'asc' },
+          select: {
+            id: true,
+            status: true,
+            startedAt: true,
+            completedAt: true,
+            slaDueAt: true,
+            branch: { select: { name: true, code: true } },
+            assignedOfficer: { select: { id: true, firstName: true, lastName: true, designation: true } },
+            stage: { select: { name: true, stageOrder: true, assignedRole: { select: { name: true, code: true } } } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      generatedAt: new Date(),
+      files: submissions.map((submission) => ({
+        id: submission.id,
+        trackingNumber: submission.trackingNumber,
+        title: submission.title,
+        status: submission.status,
+        workflowName: submission.workflow.name,
+        originOffice: this.officeLabel(submission.branch),
+        currentOffice: this.officeLabel(submission.currentBranch || submission.branch),
+        steps: submission.fileStages.map((stage) => ({
+          fileStageId: stage.id,
+          order: stage.stage.stageOrder,
+          stageName: stage.stage.name,
+          roleName: stage.stage.assignedRole?.name || null,
+          office: this.officeLabel(stage.branch),
+          officer: stage.assignedOfficer ? this.userLabel(stage.assignedOfficer) : null,
+          status: stage.status,
+          startedAt: stage.startedAt,
+          completedAt: stage.completedAt,
+          slaDueAt: stage.slaDueAt,
+          durationDays: stage.completedAt ? this.daysBetween(stage.startedAt, stage.completedAt) : null,
+        })),
+      })),
+    };
+  }
+
+  async getOfficerWorkloadReport(user: JwtPayload) {
+    const where = await this.buildSubmissionScope(user);
+    const now = new Date();
+    const activeStages = await this.prisma.fileStage.findMany({
+      where: {
+        status: { in: [FileStageStatus.PENDING, FileStageStatus.IN_PROGRESS] },
+        submission: where,
+      },
+      select: {
+        id: true,
+        slaDueAt: true,
+        assignedOfficer: { select: { id: true, firstName: true, lastName: true } },
+        stage: { select: { name: true, assignedRole: { select: { name: true, code: true } } } },
+        submission: {
+          select: {
+            id: true,
+            trackingNumber: true,
+            title: true,
+            branch: { select: { name: true } },
+            currentBranch: { select: { name: true } },
+            workflow: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    return {
+      generatedAt: now,
+      workload: this.buildWorkload(activeStages, now),
+    };
+  }
+
+  async getSlaComplianceReport(user: JwtPayload) {
+    const where = await this.buildSubmissionScope(user);
+    const now = new Date();
+    const stages = await this.prisma.fileStage.findMany({
+      where: { submission: where },
+      select: {
+        id: true,
+        status: true,
+        startedAt: true,
+        completedAt: true,
+        slaDueAt: true,
+        stage: { select: { name: true, assignedRole: { select: { name: true, code: true } } } },
+        submission: {
+          select: {
+            id: true,
+            trackingNumber: true,
+            title: true,
+            workflow: { select: { name: true } },
+            branch: { select: { name: true } },
+            currentBranch: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { slaDueAt: 'asc' },
+    });
+
+    const rows = stages.map((stage) => {
+      const terminalDate = stage.completedAt || now;
+      const breached = terminalDate > stage.slaDueAt;
+      return {
+        fileStageId: stage.id,
+        trackingNumber: stage.submission.trackingNumber,
+        title: stage.submission.title,
+        workflowName: stage.submission.workflow.name,
+        branchName: stage.submission.currentBranch?.name || stage.submission.branch.name,
+        stageName: stage.stage.name,
+        roleName: stage.stage.assignedRole?.name || null,
+        status: stage.status,
+        startedAt: stage.startedAt,
+        completedAt: stage.completedAt,
+        slaDueAt: stage.slaDueAt,
+        breached,
+        daysOverdue: breached ? this.daysBetween(stage.slaDueAt, terminalDate) : 0,
+      };
+    });
+
+    const completed = rows.filter((row) => row.completedAt);
+    const breached = rows.filter((row) => row.breached);
+
+    return {
+      generatedAt: now,
+      totals: {
+        stages: rows.length,
+        completed: completed.length,
+        pending: rows.filter((row) => !row.completedAt).length,
+        breached: breached.length,
+        complianceRate: rows.length > 0 ? Number((((rows.length - breached.length) / rows.length) * 100).toFixed(2)) : 100,
+      },
+      byRole: this.countBy(rows, (row) => row.roleName || 'Unassigned'),
+      byStage: this.countBy(rows, (row) => row.stageName),
+      rows,
+    };
+  }
+
+  async getPendingAgingReport(user: JwtPayload) {
+    const where = await this.buildSubmissionScope(user);
+    const now = new Date();
+    const activeStages = await this.prisma.fileStage.findMany({
+      where: {
+        status: { in: [FileStageStatus.PENDING, FileStageStatus.IN_PROGRESS] },
+        submission: where,
+      },
+      select: {
+        id: true,
+        status: true,
+        startedAt: true,
+        slaDueAt: true,
+        assignedOfficer: { select: { id: true, firstName: true, lastName: true, designation: true } },
+        stage: { select: { name: true, assignedRole: { select: { name: true, code: true } } } },
+        submission: {
+          select: {
+            id: true,
+            trackingNumber: true,
+            title: true,
+            workflow: { select: { name: true } },
+            branch: { select: { name: true } },
+            currentBranch: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { startedAt: 'asc' },
+    });
+
+    const items = activeStages.map((stage) => {
+      const ageDays = this.daysBetween(stage.startedAt, now);
+      return {
+        fileStageId: stage.id,
+        trackingNumber: stage.submission.trackingNumber,
+        title: stage.submission.title,
+        workflowName: stage.submission.workflow.name,
+        branchName: stage.submission.currentBranch?.name || stage.submission.branch.name,
+        stageName: stage.stage.name,
+        roleName: stage.stage.assignedRole?.name || null,
+        officer: stage.assignedOfficer ? this.userLabel(stage.assignedOfficer) : null,
+        status: stage.status,
+        startedAt: stage.startedAt,
+        slaDueAt: stage.slaDueAt,
+        ageDays,
+        bucket: this.agingBucket(ageDays),
+        overdue: stage.slaDueAt < now,
+      };
+    });
+
+    return {
+      generatedAt: now,
+      buckets: this.countBy(items, (item) => item.bucket),
+      items,
+    };
+  }
+
+  private async buildSubmissionScope(user: JwtPayload) {
     const where: Record<string, unknown> = {};
 
     if (user.role === 'CONTRACTOR') {
@@ -147,12 +359,28 @@ export class ReportsService {
       if (user.departmentId) {
         where.workflow = { departmentId: user.departmentId };
       }
-      if (user.branchId) {
-        where.branchId = user.branchId;
+      if (user.role !== 'DEPARTMENT_ADMIN' && user.branchId) {
+        where.currentBranchId = { in: await this.getBranchAndDescendantIds(user.branchId) };
       }
     }
 
     return where;
+  }
+
+  private async getBranchAndDescendantIds(branchId: string) {
+    const collected = new Set<string>([branchId]);
+    let frontier = [branchId];
+
+    for (let depth = 0; frontier.length > 0 && depth < 20; depth++) {
+      const children = await this.prisma.branch.findMany({
+        where: { parentBranchId: { in: frontier } },
+        select: { id: true },
+      });
+      frontier = children.map((branch) => branch.id).filter((id) => !collected.has(id));
+      frontier.forEach((id) => collected.add(id));
+    }
+
+    return [...collected];
   }
 
   private calculateTotals(
@@ -179,7 +407,14 @@ export class ReportsService {
       slaDueAt: Date;
       assignedOfficer: { id: string; firstName: string; lastName: string } | null;
       stage: { name: string; assignedRole: { name: string; code: string } };
-      submission: { id: string; trackingNumber: string; title: string; branch: { name: string }; workflow: { name: string } };
+      submission: {
+        id: string;
+        trackingNumber: string;
+        title: string;
+        branch: { name: string };
+        currentBranch: { name: string } | null;
+        workflow: { name: string };
+      };
     }>,
     now: Date,
   ) {
@@ -214,7 +449,7 @@ export class ReportsService {
         trackingNumber: stage.submission.trackingNumber,
         title: stage.submission.title,
         workflowName: stage.submission.workflow.name,
-        branchName: stage.submission.branch.name,
+        branchName: stage.submission.currentBranch?.name || stage.submission.branch.name,
         stageName: stage.stage.name,
         slaDueAt: stage.slaDueAt,
         overdue,
@@ -238,6 +473,24 @@ export class ReportsService {
 
   private daysBetween(from: Date, to: Date) {
     return Math.max(0, Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000)));
+  }
+
+  private agingBucket(ageDays: number) {
+    if (ageDays <= 2) return '0-2 days';
+    if (ageDays <= 5) return '3-5 days';
+    if (ageDays <= 10) return '6-10 days';
+    if (ageDays <= 20) return '11-20 days';
+    return '21+ days';
+  }
+
+  private officeLabel(office: { name: string; code?: string | null } | null) {
+    if (!office) return null;
+    return office.code ? `${office.name} (${office.code})` : office.name;
+  }
+
+  private userLabel(user: { firstName: string; lastName: string; designation?: string | null }) {
+    const name = `${user.firstName} ${user.lastName}`.trim();
+    return user.designation ? `${name} - ${user.designation}` : name;
   }
 
   private escapeCsv(value: string) {

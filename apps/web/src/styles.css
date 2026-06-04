@@ -129,6 +129,10 @@ body {
   cursor: pointer;
 }
 
+.full-width-input {
+  width: 100%;
+}
+
 @media (max-width: 720px) {
   .content {
     padding: 16px;

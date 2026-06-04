@@ -26,6 +26,7 @@ import { validateEnv } from './config/env.validation';
 import { HealthModule } from './health/health.module';
 import { OrganisationModule } from './organisation/organisation.module';
 import { ReportsModule } from './reports/reports.module';
+import { DorModule } from './dor/dor.module';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { ReportsModule } from './reports/reports.module';
     HealthModule,
     OrganisationModule,
     ReportsModule,
+    DorModule,
   ],
   providers: [
     // Global JWT auth guard — all routes require auth unless @Public() is used

@@ -5,7 +5,7 @@
 // Used by backend (NestJS pipes) and frontend (form validation).
 
 import { z } from 'zod';
-import { Role, StageType, StageAction, ParallelStrategy, CommentType } from '../types';
+import { Role, StageType, StageAction, ParallelStrategy, CommentType, SakhaType } from '../types';
 
 // ---- Common ----
 const sanitizedString = (minLen = 1, maxLen = 500) =>
@@ -118,7 +118,7 @@ export const CreateStageSchema = z.object({
   stageType: z.nativeEnum(StageType).default(StageType.SEQUENTIAL),
   assignedRoleId: uuidSchema,
   slaDays: z.number().int().min(1).max(365).default(3),
-  allowedActions: z.array(z.nativeEnum(StageAction)).min(1),
+  allowedActions: z.array(z.nativeEnum(StageAction)).default([]),
   requiredDocs: z.array(z.string().max(200)).optional(),
 });
 export type CreateStageInput = z.infer<typeof CreateStageSchema>;
@@ -138,19 +138,39 @@ export const CreateRoutingRuleSchema = z.object({
 export type CreateRoutingRuleInput = z.infer<typeof CreateRoutingRuleSchema>;
 
 // ---- Submission Schemas ----
-export const CreateSubmissionSchema = z.object({
-  workflowId: uuidSchema,
-  branchId: uuidSchema,
-  title: sanitizedString(1, 500),
-  description: sanitizedString(0, 5000).optional(),
-  metadata: z.record(z.unknown()).optional(),
-});
+export const CreateSubmissionSchema = z
+  .object({
+    workflowId: uuidSchema.optional(),
+    submissionType: sanitizedString(1, 100).optional(),
+    branchId: uuidSchema,
+    title: sanitizedString(1, 500),
+    description: sanitizedString(0, 5000).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .refine((value) => value.workflowId || value.submissionType, {
+    message: 'Select a submission type',
+    path: ['submissionType'],
+  });
 export type CreateSubmissionInput = z.infer<typeof CreateSubmissionSchema>;
 
 export const ForwardSubmissionSchema = z.object({
   comment: sanitizedString(0, 2000).optional(),
+  targetStageId: uuidSchema.optional(),
+  targetBranchId: uuidSchema.optional(),
+  assignedTo: uuidSchema.optional(),
 });
 export type ForwardSubmissionInput = z.infer<typeof ForwardSubmissionSchema>;
+
+export const ApproveSubmissionSchema = z.object({
+  comment: sanitizedString(0, 2000).optional(),
+});
+export type ApproveSubmissionInput = z.infer<typeof ApproveSubmissionSchema>;
+
+export const ForwardToMinistrySchema = z.object({
+  comment: sanitizedString(1, 2000).optional(),
+  ministryReference: sanitizedString(1, 100).optional(),
+});
+export type ForwardToMinistryInput = z.infer<typeof ForwardToMinistrySchema>;
 
 export const RejectSubmissionSchema = z.object({
   targetStageId: uuidSchema,
@@ -180,6 +200,44 @@ export const UpdatePublicTrackingSchema = z.object({
 });
 export type UpdatePublicTrackingInput = z.infer<typeof UpdatePublicTrackingSchema>;
 
+// ---- DOR Tok, Raye, Tippani Schemas ----
+export const CreateTokAssignmentSchema = z.object({
+  tokTo: uuidSchema,
+  targetBranchId: uuidSchema.optional(),
+  taskDescription: sanitizedString(1, 2000).optional(),
+  continueFile: z.boolean().default(false),
+  targetStageId: uuidSchema.optional(),
+});
+export type CreateTokAssignmentInput = z.infer<typeof CreateTokAssignmentSchema>;
+
+export const CompleteTokAssignmentSchema = z.object({
+  responseNote: sanitizedString(1, 2000),
+});
+export type CompleteTokAssignmentInput = z.infer<typeof CompleteTokAssignmentSchema>;
+
+export const CreateRayeRequestSchema = z.object({
+  targetSakha: z.nativeEnum(SakhaType),
+  targetBranchId: uuidSchema.optional(),
+  assignedTo: uuidSchema.optional(),
+  requestText: sanitizedString(1, 3000),
+  dueAt: z.string().datetime().optional(),
+  canReassign: z.boolean().default(true),
+});
+export type CreateRayeRequestInput = z.infer<typeof CreateRayeRequestSchema>;
+
+export const RespondRayeRequestSchema = z.object({
+  responseText: sanitizedString(1, 5000),
+});
+export type RespondRayeRequestInput = z.infer<typeof RespondRayeRequestSchema>;
+
+export const PrepareTippaniSchema = z.object({
+  subject: sanitizedString(1, 500),
+  recommendation: sanitizedString(1, 5000),
+  referenceDocuments: z.array(uuidSchema).default([]),
+  documentId: uuidSchema.optional(),
+});
+export type PrepareTippaniInput = z.infer<typeof PrepareTippaniSchema>;
+
 // ---- Organisation Admin Schemas ----
 export const CreateDepartmentSchema = z.object({
   name: sanitizedString(1, 300),
@@ -198,6 +256,11 @@ export const CreateBranchSchema = z.object({
   name: sanitizedString(1, 300),
   code: sanitizedString(1, 20).transform((value) => value.toUpperCase().replace(/\s+/g, '_')),
   departmentId: uuidSchema,
+  branchLevel: z.number().int().min(1).max(5).optional(),
+  parentBranchId: uuidSchema.optional().nullable(),
+  clusterType: sanitizedString(1, 50).optional().nullable(),
+  nepaliName: sanitizedString(1, 255).optional().nullable(),
+  isDorHq: z.boolean().optional(),
 });
 export type CreateBranchInput = z.infer<typeof CreateBranchSchema>;
 
@@ -205,6 +268,11 @@ export const UpdateBranchSchema = z.object({
   name: sanitizedString(1, 300).optional(),
   code: sanitizedString(1, 20).transform((value) => value.toUpperCase().replace(/\s+/g, '_')).optional(),
   departmentId: uuidSchema.optional(),
+  branchLevel: z.number().int().min(1).max(5).optional(),
+  parentBranchId: uuidSchema.optional().nullable(),
+  clusterType: sanitizedString(1, 50).optional().nullable(),
+  nepaliName: sanitizedString(1, 255).optional().nullable(),
+  isDorHq: z.boolean().optional(),
 });
 export type UpdateBranchInput = z.infer<typeof UpdateBranchSchema>;
 
@@ -219,7 +287,17 @@ export type PaginationInput = z.infer<typeof PaginationSchema>;
 
 // ---- Search / Filter Schemas ----
 export const SubmissionFilterSchema = z.object({
-  status: z.enum(['SUBMITTED', 'IN_REVIEW', 'QUERY_RAISED', 'ON_HOLD', 'APPROVED', 'REJECTED', 'ARCHIVED']).optional(),
+  status: z.enum([
+    'SUBMITTED',
+    'IN_REVIEW',
+    'QUERY_RAISED',
+    'ON_HOLD',
+    'RETURNED_TO_CONTRACTOR',
+    'APPROVED',
+    'REJECTED',
+    'ARCHIVED',
+    'FORWARDED_TO_MINISTRY',
+  ]).optional(),
   workflowId: uuidSchema.optional(),
   branchId: uuidSchema.optional(),
   departmentId: uuidSchema.optional(),

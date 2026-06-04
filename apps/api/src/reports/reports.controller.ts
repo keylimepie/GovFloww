@@ -24,4 +24,32 @@ export class ReportsController {
     const report = await this.reportsService.getOperationalSummary(user);
     return this.reportsService.toOperationalSummaryCsv(report);
   }
+
+  @Get('file-flow')
+  @RequirePermissions('report:dept', 'report:branch', 'report:export')
+  async fileFlow(@CurrentUser() user: JwtPayload) {
+    const data = await this.reportsService.getFileFlowReport(user);
+    return { success: true, data };
+  }
+
+  @Get('officer-workload')
+  @RequirePermissions('report:dept', 'report:branch', 'report:export')
+  async officerWorkload(@CurrentUser() user: JwtPayload) {
+    const data = await this.reportsService.getOfficerWorkloadReport(user);
+    return { success: true, data };
+  }
+
+  @Get('sla-compliance')
+  @RequirePermissions('report:dept', 'report:branch', 'report:export')
+  async slaCompliance(@CurrentUser() user: JwtPayload) {
+    const data = await this.reportsService.getSlaComplianceReport(user);
+    return { success: true, data };
+  }
+
+  @Get('pending-aging')
+  @RequirePermissions('report:dept', 'report:branch', 'report:export')
+  async pendingAging(@CurrentUser() user: JwtPayload) {
+    const data = await this.reportsService.getPendingAgingReport(user);
+    return { success: true, data };
+  }
 }

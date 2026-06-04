@@ -1,0 +1,493 @@
+[
+  {
+    "id": "wf-001",
+    "name": "BOQ Approval — Standard",
+    "description": "Standard Bill of Quantities approval for Public Works projects under NPR 50 lakh",
+    "departmentCode": "PUBLIC_WORKS",
+    "version": 1,
+    "status": "ACTIVE",
+    "isPubliclyTrackable": true,
+    "publicDetailLevel": "BASIC",
+    "metadataSchema": [
+      { "key": "boq_value", "label": "BOQ Value (NPR)", "type": "NUMBER", "required": true, "min": 0 },
+      { "key": "project_type", "label": "Project Type", "type": "SELECT", "required": true, "options": ["ROAD", "BRIDGE", "BUILDING", "DRAINAGE", "OTHER"] },
+      { "key": "project_location", "label": "Project Location", "type": "TEXT", "required": true },
+      { "key": "ward_no", "label": "Ward Number", "type": "NUMBER", "required": false }
+    ],
+    "stages": [
+      {
+        "id": "wf001-s1",
+        "name": "Entry Desk",
+        "stageOrder": 1,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "ENTRY_DESK_OFFICER",
+        "slaDays": 2,
+        "slaWarningDays": 1,
+        "isEntryStage": true,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT_TO_CONTRACTOR", "COMMENT", "REQUEST_INFO"],
+        "requiredDocumentTypes": ["BOQ", "SITE_SURVEY"],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf001-s2", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": []
+      },
+      {
+        "id": "wf001-s2",
+        "name": "Sub Engineer Review",
+        "stageOrder": 2,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SUB_ENGINEER",
+        "slaDays": 5,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "QUERY", "HOLD"],
+        "requiredDocumentTypes": [],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf001-s3", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf001-s1"]
+      },
+      {
+        "id": "wf001-s3",
+        "name": "Engineer Review",
+        "stageOrder": 3,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "ENGINEER",
+        "slaDays": 5,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "QUERY", "HOLD", "SIGN"],
+        "requiredDocumentTypes": [],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf001-s4", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf001-s1", "wf001-s2"]
+      },
+      {
+        "id": "wf001-s4",
+        "name": "Senior Engineer — Final Approval",
+        "stageOrder": 4,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SENIOR_ENGINEER",
+        "slaDays": 3,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": true,
+        "requiresDigitalSignature": true,
+        "signatureTier": 2,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "SIGN"],
+        "requiredDocumentTypes": [],
+        "routingRules": [],
+        "allowedRejectionTargets": ["wf001-s1", "wf001-s2", "wf001-s3"]
+      }
+    ]
+  },
+
+  {
+    "id": "wf-002",
+    "name": "BOQ Approval — High Value (Above NPR 50 Lakh)",
+    "description": "BOQ approval for high-value projects requiring Director-level sign-off and parallel engineering review",
+    "departmentCode": "PUBLIC_WORKS",
+    "version": 1,
+    "status": "ACTIVE",
+    "isPubliclyTrackable": true,
+    "publicDetailLevel": "DETAILED",
+    "metadataSchema": [
+      { "key": "boq_value", "label": "BOQ Value (NPR)", "type": "NUMBER", "required": true, "min": 5000001 },
+      { "key": "project_type", "label": "Project Type", "type": "SELECT", "required": true, "options": ["ROAD", "BRIDGE", "BUILDING", "DRAINAGE", "TUNNEL", "OTHER"] },
+      { "key": "project_location", "label": "Project Location", "type": "TEXT", "required": true },
+      { "key": "is_foreign_funded", "label": "Foreign-Funded Project", "type": "BOOLEAN", "required": true },
+      { "key": "funding_agency", "label": "Funding Agency", "type": "TEXT", "required": false }
+    ],
+    "stages": [
+      {
+        "id": "wf002-s1",
+        "name": "Entry Desk",
+        "stageOrder": 1,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "ENTRY_DESK_OFFICER",
+        "slaDays": 2,
+        "slaWarningDays": 1,
+        "isEntryStage": true,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT_TO_CONTRACTOR", "COMMENT", "REQUEST_INFO"],
+        "requiredDocumentTypes": ["BOQ", "SITE_SURVEY", "DRAWING"],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf002-s2", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": []
+      },
+      {
+        "id": "wf002-s2",
+        "name": "Sub Engineer Review",
+        "stageOrder": 2,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SUB_ENGINEER",
+        "slaDays": 7,
+        "slaWarningDays": 2,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "QUERY", "HOLD"],
+        "requiredDocumentTypes": [],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf002-s3", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf002-s1"]
+      },
+      {
+        "id": "wf002-s3",
+        "name": "Parallel Engineering Review",
+        "stageOrder": 3,
+        "stageType": "PARALLEL",
+        "assignedRole": "ENGINEER",
+        "slaDays": 7,
+        "slaWarningDays": 2,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "SIGN"],
+        "requiredDocumentTypes": [],
+        "parallelConfig": {
+          "strategy": "ALL_MUST_APPROVE",
+          "quorumCount": null
+        },
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf002-s4", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf002-s1", "wf002-s2"]
+      },
+      {
+        "id": "wf002-s4",
+        "name": "Senior Engineer Review",
+        "stageOrder": 4,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SENIOR_ENGINEER",
+        "slaDays": 5,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": true,
+        "signatureTier": 1,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "SIGN"],
+        "requiredDocumentTypes": [],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf002-s5", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf002-s1", "wf002-s2", "wf002-s3"]
+      },
+      {
+        "id": "wf002-s5",
+        "name": "Director — Final Approval",
+        "stageOrder": 5,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SENIOR_ENGINEER",
+        "slaDays": 5,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": true,
+        "requiresDigitalSignature": true,
+        "signatureTier": 2,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "SIGN"],
+        "requiredDocumentTypes": [],
+        "routingRules": [],
+        "allowedRejectionTargets": ["wf002-s1", "wf002-s2", "wf002-s3", "wf002-s4"]
+      }
+    ]
+  },
+
+  {
+    "id": "wf-003",
+    "name": "Building Construction Permit",
+    "description": "Residential or commercial building construction permit with structural, electrical, and plumbing review",
+    "departmentCode": "MUNICIPAL",
+    "version": 1,
+    "status": "ACTIVE",
+    "isPubliclyTrackable": true,
+    "publicDetailLevel": "DETAILED",
+    "metadataSchema": [
+      { "key": "building_type", "label": "Building Type", "type": "SELECT", "required": true, "options": ["RESIDENTIAL", "COMMERCIAL", "INDUSTRIAL", "MIXED_USE"] },
+      { "key": "floor_count", "label": "Number of Floors", "type": "NUMBER", "required": true, "min": 1 },
+      { "key": "plot_area_sqm", "label": "Plot Area (sqm)", "type": "NUMBER", "required": true },
+      { "key": "estimated_cost", "label": "Estimated Construction Cost (NPR)", "type": "NUMBER", "required": true },
+      { "key": "ward_no", "label": "Ward Number", "type": "NUMBER", "required": true },
+      { "key": "land_ownership", "label": "Land Ownership Type", "type": "SELECT", "required": true, "options": ["PRIVATE", "LEASED", "GOVERNMENT"] }
+    ],
+    "stages": [
+      {
+        "id": "wf003-s1",
+        "name": "Document Intake",
+        "stageOrder": 1,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "ENTRY_DESK_OFFICER",
+        "slaDays": 2,
+        "slaWarningDays": 1,
+        "isEntryStage": true,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT_TO_CONTRACTOR", "COMMENT", "REQUEST_INFO"],
+        "requiredDocumentTypes": ["DRAWING", "SITE_SURVEY", "CERTIFICATE", "OTHER"],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf003-s2", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": []
+      },
+      {
+        "id": "wf003-s2",
+        "name": "Technical Scrutiny",
+        "stageOrder": 2,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SUB_ENGINEER",
+        "slaDays": 7,
+        "slaWarningDays": 2,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "QUERY", "HOLD"],
+        "requiredDocumentTypes": [],
+        "routingRules": [
+          {
+            "conditionField": "floor_count",
+            "operator": "GTE",
+            "conditionValue": "5",
+            "toStageId": "wf003-s3-parallel",
+            "isDefaultRoute": false,
+            "ruleOrder": 0
+          },
+          { "isDefaultRoute": true, "toStageId": "wf003-s3", "ruleOrder": 1 }
+        ],
+        "allowedRejectionTargets": ["wf003-s1"]
+      },
+      {
+        "id": "wf003-s3-parallel",
+        "name": "Multi-Discipline Review (5+ floors)",
+        "stageOrder": 3,
+        "stageType": "PARALLEL",
+        "assignedRole": "ENGINEER",
+        "slaDays": 10,
+        "slaWarningDays": 2,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "QUERY"],
+        "requiredDocumentTypes": [],
+        "parallelConfig": {
+          "strategy": "ALL_MUST_APPROVE",
+          "quorumCount": null
+        },
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf003-s4", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf003-s1", "wf003-s2"]
+      },
+      {
+        "id": "wf003-s3",
+        "name": "Engineering Review (Standard)",
+        "stageOrder": 3,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "ENGINEER",
+        "slaDays": 7,
+        "slaWarningDays": 2,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "QUERY"],
+        "requiredDocumentTypes": [],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf003-s4", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf003-s1", "wf003-s2"]
+      },
+      {
+        "id": "wf003-s4",
+        "name": "Senior Engineer — Approval",
+        "stageOrder": 4,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SENIOR_ENGINEER",
+        "slaDays": 5,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": true,
+        "requiresDigitalSignature": true,
+        "signatureTier": 2,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "SIGN"],
+        "requiredDocumentTypes": [],
+        "routingRules": [],
+        "allowedRejectionTargets": ["wf003-s1", "wf003-s2", "wf003-s3", "wf003-s3-parallel"]
+      }
+    ]
+  },
+
+  {
+    "id": "wf-004",
+    "name": "Road Maintenance Request",
+    "description": "Simple 3-stage approval for routine road maintenance work under NPR 5 lakh",
+    "departmentCode": "PUBLIC_WORKS",
+    "version": 1,
+    "status": "ACTIVE",
+    "isPubliclyTrackable": false,
+    "publicDetailLevel": "BASIC",
+    "metadataSchema": [
+      { "key": "work_type", "label": "Work Type", "type": "SELECT", "required": true, "options": ["POTHOLE_REPAIR", "RESURFACING", "MARKING", "DRAINAGE", "SIGN_BOARD"] },
+      { "key": "road_name", "label": "Road Name / Location", "type": "TEXT", "required": true },
+      { "key": "estimated_cost", "label": "Estimated Cost (NPR)", "type": "NUMBER", "required": true, "max": 500000 },
+      { "key": "urgency", "label": "Urgency Level", "type": "SELECT", "required": true, "options": ["ROUTINE", "URGENT", "EMERGENCY"] }
+    ],
+    "stages": [
+      {
+        "id": "wf004-s1",
+        "name": "Entry Desk",
+        "stageOrder": 1,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "ENTRY_DESK_OFFICER",
+        "slaDays": 1,
+        "slaWarningDays": 1,
+        "isEntryStage": true,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT_TO_CONTRACTOR", "COMMENT"],
+        "requiredDocumentTypes": ["PHOTO", "BOQ"],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf004-s2", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": []
+      },
+      {
+        "id": "wf004-s2",
+        "name": "Sub Engineer Verification",
+        "stageOrder": 2,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SUB_ENGINEER",
+        "slaDays": 3,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "COMMENT", "QUERY"],
+        "requiredDocumentTypes": [],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf004-s3", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf004-s1"]
+      },
+      {
+        "id": "wf004-s3",
+        "name": "Engineer — Final Approval",
+        "stageOrder": 3,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "ENGINEER",
+        "slaDays": 2,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": true,
+        "requiresDigitalSignature": true,
+        "signatureTier": 1,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "SIGN"],
+        "requiredDocumentTypes": [],
+        "routingRules": [],
+        "allowedRejectionTargets": ["wf004-s1", "wf004-s2"]
+      }
+    ]
+  },
+
+  {
+    "id": "wf-005",
+    "name": "Revenue Department — Tax Exemption Application",
+    "description": "Tax exemption certificate application with parallel review by revenue and legal officers",
+    "departmentCode": "REVENUE",
+    "version": 1,
+    "status": "ACTIVE",
+    "isPubliclyTrackable": true,
+    "publicDetailLevel": "BASIC",
+    "metadataSchema": [
+      { "key": "applicant_type", "label": "Applicant Type", "type": "SELECT", "required": true, "options": ["INDIVIDUAL", "COMPANY", "NGO", "GOVERNMENT_ENTITY"] },
+      { "key": "exemption_type", "label": "Exemption Type", "type": "SELECT", "required": true, "options": ["VAT", "CUSTOMS", "INCOME_TAX", "PROPERTY_TAX"] },
+      { "key": "fiscal_year", "label": "Fiscal Year", "type": "TEXT", "required": true },
+      { "key": "claimed_amount", "label": "Claimed Exemption Amount (NPR)", "type": "NUMBER", "required": true }
+    ],
+    "stages": [
+      {
+        "id": "wf005-s1",
+        "name": "Document Intake",
+        "stageOrder": 1,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "ENTRY_DESK_OFFICER",
+        "slaDays": 2,
+        "slaWarningDays": 1,
+        "isEntryStage": true,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT_TO_CONTRACTOR", "COMMENT", "REQUEST_INFO"],
+        "requiredDocumentTypes": ["CERTIFICATE", "LETTER", "OTHER"],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf005-s2", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": []
+      },
+      {
+        "id": "wf005-s2",
+        "name": "Initial Assessment",
+        "stageOrder": 2,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SUB_ENGINEER",
+        "slaDays": 5,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "COMMENT", "QUERY", "HOLD"],
+        "requiredDocumentTypes": [],
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf005-s3", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf005-s1"]
+      },
+      {
+        "id": "wf005-s3",
+        "name": "Parallel Review — Revenue & Legal",
+        "stageOrder": 3,
+        "stageType": "PARALLEL",
+        "assignedRole": "ENGINEER",
+        "slaDays": 7,
+        "slaWarningDays": 2,
+        "isEntryStage": false,
+        "isTerminalStage": false,
+        "requiresDigitalSignature": false,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "QUERY"],
+        "requiredDocumentTypes": [],
+        "parallelConfig": {
+          "strategy": "QUORUM",
+          "quorumCount": 2
+        },
+        "routingRules": [
+          { "isDefaultRoute": true, "toStageId": "wf005-s4", "ruleOrder": 0 }
+        ],
+        "allowedRejectionTargets": ["wf005-s1", "wf005-s2"]
+      },
+      {
+        "id": "wf005-s4",
+        "name": "Senior Officer — Final Approval",
+        "stageOrder": 4,
+        "stageType": "SEQUENTIAL",
+        "assignedRole": "SENIOR_ENGINEER",
+        "slaDays": 5,
+        "slaWarningDays": 1,
+        "isEntryStage": false,
+        "isTerminalStage": true,
+        "requiresDigitalSignature": true,
+        "signatureTier": 2,
+        "allowedActions": ["FORWARD", "REJECT", "REJECT_ANY", "COMMENT", "SIGN"],
+        "requiredDocumentTypes": [],
+        "routingRules": [],
+        "allowedRejectionTargets": ["wf005-s1", "wf005-s2", "wf005-s3"]
+      }
+    ]
+  }
+]

@@ -11,7 +11,12 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuditAction, WorkflowStatus } from '@govflow/shared';
-import type { CreateWorkflowInput, UpdateWorkflowInput, CreateStageInput } from '@govflow/shared';
+import type {
+  CreateRoutingRuleInput,
+  CreateStageInput,
+  CreateWorkflowInput,
+  UpdateWorkflowInput,
+} from '@govflow/shared';
 
 @Injectable()
 export class WorkflowsService {
@@ -213,6 +218,58 @@ export class WorkflowsService {
     });
 
     return stage;
+  }
+
+  async addRoutingRule(
+    workflowId: string,
+    stageId: string,
+    dto: CreateRoutingRuleInput,
+    userId: string,
+    ipAddress: string,
+  ) {
+    const workflow = await this.prisma.workflowDefinition.findUnique({
+      where: { id: workflowId },
+      include: { stages: true },
+    });
+    if (!workflow) throw new NotFoundException('Workflow not found');
+    if (workflow.status === WorkflowStatus.ACTIVE) {
+      throw new BadRequestException('Cannot add routing rules to an active workflow');
+    }
+
+    const sourceStage = workflow.stages.find((stage) => stage.id === stageId);
+    if (!sourceStage) throw new NotFoundException('Source stage not found in workflow');
+
+    const targetStage = workflow.stages.find((stage) => stage.id === dto.targetStageId);
+    if (!targetStage) throw new NotFoundException('Target stage not found in workflow');
+    if (targetStage.id === sourceStage.id) {
+      throw new BadRequestException('Routing rule target must be a different stage');
+    }
+
+    const rule = await this.prisma.stageRoutingRule.create({
+      data: {
+        stageId,
+        conditionField: dto.conditionField,
+        operator: dto.operator,
+        value: dto.value,
+        targetStageId: dto.targetStageId,
+      },
+    });
+
+    await this.auditService.log({
+      actorId: userId,
+      action: AuditAction.WORKFLOW_UPDATED,
+      metadata: {
+        workflowId,
+        stageId,
+        routingRuleId: rule.id,
+        targetStageId: dto.targetStageId,
+        conditionField: dto.conditionField,
+        operator: dto.operator,
+      },
+      ipAddress,
+    });
+
+    return rule;
   }
 
   /**

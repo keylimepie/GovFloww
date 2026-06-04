@@ -28,7 +28,9 @@ import {
 import { ZodValidationPipe } from '../common/pipes';
 import {
   Role,
+  ApproveSubmissionSchema,
   CreateSubmissionSchema,
+  ForwardToMinistrySchema,
   ForwardSubmissionSchema,
   RejectSubmissionSchema,
   HoldSubmissionSchema,
@@ -37,7 +39,9 @@ import {
   UpdatePublicTrackingSchema,
 } from '@govflow/shared';
 import type {
+  ApproveSubmissionInput,
   CreateSubmissionInput,
+  ForwardToMinistryInput,
   ForwardSubmissionInput,
   RejectSubmissionInput,
   HoldSubmissionInput,
@@ -89,6 +93,15 @@ export class SubmissionsController {
     return { success: true, data: result };
   }
 
+  @Get(':id/available-actions')
+  async availableActions(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const data = await this.submissionsService.availableActions(id, user);
+    return { success: true, data };
+  }
+
   @Get(':id')
   async findOne(
     @Param('id') id: string,
@@ -136,6 +149,30 @@ export class SubmissionsController {
     @ClientIp() ip: string,
   ) {
     const submission = await this.submissionsService.forward(id, dto, user, ip);
+    return { success: true, data: submission };
+  }
+
+  @Post(':id/approve')
+  @RequirePermissions('submission:approve', 'submission:forward')
+  async approve(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(ApproveSubmissionSchema)) dto: ApproveSubmissionInput,
+    @CurrentUser() user: JwtPayload,
+    @ClientIp() ip: string,
+  ) {
+    const submission = await this.submissionsService.approve(id, dto, user, ip);
+    return { success: true, data: submission };
+  }
+
+  @Post(':id/forward-to-ministry')
+  @RequirePermissions('*', 'submission:forward_to_ministry')
+  async forwardToMinistry(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(ForwardToMinistrySchema)) dto: ForwardToMinistryInput,
+    @CurrentUser() user: JwtPayload,
+    @ClientIp() ip: string,
+  ) {
+    const submission = await this.submissionsService.forwardToMinistry(id, dto, user, ip);
     return { success: true, data: submission };
   }
 

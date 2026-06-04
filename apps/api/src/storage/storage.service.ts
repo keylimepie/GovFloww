@@ -141,6 +141,43 @@ export class StorageService {
     }
   }
 
+  async uploadGeneratedFile(input: {
+    buffer: Buffer;
+    fileName: string;
+    mimeType: string;
+    folder?: string;
+  }): Promise<{ storageKey: string; sha256: string }> {
+    try {
+      const extension = extname(input.fileName);
+      const file = {
+        originalname: input.fileName,
+        mimetype: input.mimeType,
+        buffer: input.buffer,
+        size: input.buffer.length,
+      } as Express.Multer.File;
+      this.validateFile(file, extension);
+
+      const storageKey = `${input.folder || 'generated'}/${randomUUID()}${extension}`;
+      const sha256 = createHash('sha256').update(input.buffer).digest('hex');
+
+      await this.minioClient.putObject(
+        this.bucketName,
+        storageKey,
+        input.buffer,
+        input.buffer.length,
+        { 'Content-Type': input.mimeType },
+      );
+
+      return { storageKey, sha256 };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error('Failed to upload generated file to MinIO', error);
+      throw new InternalServerErrorException('Failed to upload generated file');
+    }
+  }
+
   async getPresignedUrl(storageKey: string, expirySeconds: number = 3600): Promise<string> {
     try {
       return await this.minioClient.presignedGetObject(this.bucketName, storageKey, expirySeconds);

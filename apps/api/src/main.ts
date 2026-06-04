@@ -49,7 +49,7 @@ async function bootstrap() {
     origin: corsOrigin.split(',').map((o: string) => o.trim()),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-csrf-token'],
     maxAge: 3600,
   });
 

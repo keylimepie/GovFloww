@@ -93,12 +93,18 @@ export class OrganisationService {
 
     const department = await this.prisma.department.findUnique({ where: { id: dto.departmentId } });
     if (!department) throw new NotFoundException('Department not found');
+    await this.ensureParentBranchAllowed(dto.parentBranchId, dto.departmentId);
 
     const branch = await this.prisma.branch.create({
       data: {
         name: dto.name,
         code: dto.code,
         departmentId: dto.departmentId,
+        branchLevel: dto.branchLevel ?? 1,
+        parentBranchId: dto.parentBranchId ?? null,
+        clusterType: dto.clusterType ?? null,
+        nepaliName: dto.nepaliName ?? null,
+        isDorHq: dto.isDorHq ?? false,
       },
     });
 
@@ -120,6 +126,9 @@ export class OrganisationService {
     this.ensureCanManageDepartment(user, existing.departmentId);
     this.ensureCanManageDepartment(user, targetDepartmentId);
     if (dto.code && dto.code !== existing.code) await this.ensureUniqueBranchCode(dto.code);
+    if (dto.parentBranchId !== undefined) {
+      await this.ensureParentBranchAllowed(dto.parentBranchId, targetDepartmentId, id);
+    }
 
     const branch = await this.prisma.branch.update({
       where: { id },
@@ -127,6 +136,11 @@ export class OrganisationService {
         name: dto.name ?? undefined,
         code: dto.code ?? undefined,
         departmentId: dto.departmentId ?? undefined,
+        branchLevel: dto.branchLevel ?? undefined,
+        parentBranchId: dto.parentBranchId !== undefined ? dto.parentBranchId : undefined,
+        clusterType: dto.clusterType !== undefined ? dto.clusterType : undefined,
+        nepaliName: dto.nepaliName !== undefined ? dto.nepaliName : undefined,
+        isDorHq: dto.isDorHq ?? undefined,
       },
     });
 
@@ -154,6 +168,37 @@ export class OrganisationService {
   private async ensureUniqueBranchCode(code: string) {
     const existing = await this.prisma.branch.findUnique({ where: { code } });
     if (existing) throw new ConflictException('Branch code already exists');
+  }
+
+  private async ensureParentBranchAllowed(
+    parentBranchId: string | null | undefined,
+    departmentId: string,
+    branchId?: string,
+  ) {
+    if (!parentBranchId) return;
+    if (branchId && parentBranchId === branchId) {
+      throw new BadRequestException('A branch cannot be its own parent');
+    }
+
+    let currentParentId: string | null = parentBranchId;
+    for (let depth = 0; currentParentId && depth < 20; depth++) {
+      const parent: { id: string; departmentId: string; parentBranchId: string | null } | null =
+        await this.prisma.branch.findUnique({
+        where: { id: currentParentId },
+        select: { id: true, departmentId: true, parentBranchId: true },
+      });
+      if (!parent) throw new NotFoundException('Parent branch not found');
+      if (branchId && parent.id === branchId) {
+        throw new BadRequestException('Branch hierarchy cannot contain a cycle');
+      }
+      if (parent.departmentId !== departmentId) {
+        throw new BadRequestException('Parent branch must be in the same department');
+      }
+      if (branchId && parent.parentBranchId === branchId) {
+        throw new BadRequestException('Branch hierarchy cannot contain a cycle');
+      }
+      currentParentId = parent.parentBranchId;
+    }
   }
 
   private departmentScopedWhere(user: JwtPayload) {

@@ -132,4 +132,90 @@ describe('ReportsService', () => {
     expect(csv).toContain('"BOQ, Approval"');
     expect(csv).toContain('SLA Breaches,2026-PWD-0001,Bridge BOQ');
   });
+
+  it('returns file flow and pending aging reports with scoped records', async () => {
+    const startedAt = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+    const prisma = {
+      fileSubmission: {
+        findMany: jest.fn<() => Promise<any>>().mockResolvedValue([
+          {
+            id: 'sub-1',
+            trackingNumber: 'DOR/RD-KTM/2082-83/VO/0001',
+            title: 'Variation Order',
+            status: 'IN_REVIEW',
+            createdAt: new Date('2026-06-01T00:00:00.000Z'),
+            branch: { name: 'Road Division Kathmandu', code: 'RD-KTM' },
+            currentBranch: { name: 'Road Division Kathmandu', code: 'RD-KTM' },
+            workflow: { name: 'DOR Variation Order Approval' },
+            fileStages: [
+              {
+                id: 'fs-1',
+                status: 'PENDING',
+                startedAt,
+                completedAt: null,
+                slaDueAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                branch: { name: 'Road Division Kathmandu', code: 'RD-KTM' },
+                assignedOfficer: { id: 'user-1', firstName: 'Engineer', lastName: 'KTM', designation: 'Engineer' },
+                stage: {
+                  name: 'Engineer Review',
+                  stageOrder: 3,
+                  assignedRole: { name: 'Engineer', code: 'ENGINEER' },
+                },
+              },
+            ],
+          },
+        ]),
+      },
+      fileStage: {
+        findMany: jest.fn<() => Promise<any>>().mockResolvedValue([
+          {
+            id: 'fs-1',
+            status: 'PENDING',
+            startedAt,
+            slaDueAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            assignedOfficer: { id: 'user-1', firstName: 'Engineer', lastName: 'KTM', designation: 'Engineer' },
+            stage: {
+              name: 'Engineer Review',
+              assignedRole: { name: 'Engineer', code: 'ENGINEER' },
+            },
+            submission: {
+              id: 'sub-1',
+              trackingNumber: 'DOR/RD-KTM/2082-83/VO/0001',
+              title: 'Variation Order',
+              workflow: { name: 'DOR Variation Order Approval' },
+              branch: { name: 'Road Division Kathmandu' },
+              currentBranch: { name: 'Road Division Kathmandu' },
+            },
+          },
+        ]),
+      },
+    };
+    const service = new ReportsService(prisma as any);
+    const user = {
+      sub: 'admin-1',
+      email: 'admin@govflow.gov.np',
+      roleId: 'role-1',
+      role: 'DEPARTMENT_ADMIN',
+      permissions: ['report:dept'],
+      hierarchyLevel: 80,
+      departmentId: 'dept-1',
+      branchId: null,
+    };
+
+    const fileFlow = await service.getFileFlowReport(user as any);
+    const aging = await service.getPendingAgingReport(user as any);
+
+    expect(fileFlow.files[0]).toMatchObject({
+      trackingNumber: 'DOR/RD-KTM/2082-83/VO/0001',
+      originOffice: 'Road Division Kathmandu (RD-KTM)',
+    });
+    expect(fileFlow.files[0].steps[0]).toMatchObject({
+      stageName: 'Engineer Review',
+      officer: 'Engineer KTM - Engineer',
+    });
+    expect(aging.items[0]).toMatchObject({
+      trackingNumber: 'DOR/RD-KTM/2082-83/VO/0001',
+      bucket: '3-5 days',
+    });
+  });
 });

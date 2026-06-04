@@ -1,10 +1,11 @@
 import { create } from 'zustand';
 import { api, type AuthUser, type LoginResponse } from '../lib/api';
+import type { LoginInput } from '@govflow/shared';
 
 interface AuthState {
   user: AuthUser | null;
   hydrated: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (credentials: LoginInput) => Promise<void>;
   logout: () => Promise<void>;
   hydrate: () => Promise<void>;
 }
@@ -22,10 +23,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  login: async (email, password) => {
+  login: async (credentials) => {
     const response = await api.post<{ success: boolean; data: LoginResponse }>(
       '/api/auth/login',
-      { email, password },
+      credentials,
     );
     const { user } = response.data.data;
     set({ user, hydrated: true });
