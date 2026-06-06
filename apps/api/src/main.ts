@@ -23,7 +23,6 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
   const port = Number(process.env.PORT || 3001);
-  await app.listen(port, '0.0.0.0');
   const corsOrigin = configService.get('CORS_ORIGIN', 'http://localhost:5173');
 
   // ---- Security Middleware ----
@@ -61,7 +60,7 @@ async function bootstrap() {
   app.useGlobalFilters(new GlobalExceptionFilter());
 
   // ---- Start Server ----
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   logger.log(`🚀 GovFlow API running on http://localhost:${port}`);
   logger.log(`📋 CORS enabled for: ${corsOrigin}`);
   logger.log(`🔒 Helmet security headers enabled`);
