@@ -22,7 +22,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const configService = app.get(ConfigService);
-  const port = configService.get('API_PORT', 3001);
+  const port = Number(process.env.PORT || 3001);
+  await app.listen(port, '0.0.0.0');
   const corsOrigin = configService.get('CORS_ORIGIN', 'http://localhost:5173');
 
   // ---- Security Middleware ----
